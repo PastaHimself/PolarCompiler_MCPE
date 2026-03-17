@@ -93,6 +93,10 @@ bedrockc watch --config ./bedrockc.config.json --debounce 75
 
 A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/Downloads/temp/web/index.html). It includes source/config editing, validate/build controls, diagnostics, and Bedrock output previews. By default it uses a browser preview adapter, and it can also be wired to a real host bridge through `window.bedrockcBridge`.
 
+## Vercel Deployment
+
+Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json) and the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js). When the workbench is served over HTTP, the frontend will call `/api/compile` first and only fall back to the browser preview adapter if the API is unavailable.
+
 ## Project Layout
 
 - [`src/core/compiler.js`](/c:/Users/mg4392/Downloads/temp/src/core/compiler.js): high-level compiler orchestration

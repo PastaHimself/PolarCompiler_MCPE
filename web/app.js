@@ -104,8 +104,7 @@ let watchTimer = null;
 initialize();
 
 function initialize() {
-  elements.bridgePill.textContent = `Bridge: ${compilerBridge.label}`;
-  elements.bridgeMode.textContent = compilerBridge.label;
+  setBridgeLabel(compilerBridge.label);
 
   renderEditorFileButtons();
   renderEditorTabs();
@@ -152,6 +151,9 @@ async function runCommand(command, fromWatch = false) {
     };
     const rawResult = await compilerBridge[command](payload);
     const result = normalizeBridgeResult(rawResult);
+    if (result.bridgeLabel) {
+      setBridgeLabel(result.bridgeLabel);
+    }
 
     state.diagnostics = result.diagnostics;
     state.outputs = result.outputs;
@@ -194,6 +196,7 @@ function normalizeBridgeResult(result) {
   const outputs = normalizeOutputs(result?.outputs);
 
   return {
+    bridgeLabel: result?.bridgeLabel ?? null,
     diagnostics,
     outputs,
     durationMs: Math.round(Number(result?.durationMs ?? 0))
@@ -410,6 +413,14 @@ function createCompilerBridge() {
     };
   }
 
+  if (window.location.protocol !== "file:") {
+    return {
+      label: "Vercel API",
+      validate: (payload) => invokeApiCompile("validate", payload),
+      build: (payload) => invokeApiCompile("build", payload)
+    };
+  }
+
   return {
     label: "Browser Preview",
     validate: (payload) => runPreviewCompilation(payload, "validate"),
@@ -492,10 +503,63 @@ async function runPreviewCompilation(payload, command) {
     : buildPreviewOutputs({ metadata, declarations, config });
 
   return {
+    bridgeLabel: "Browser Preview",
     diagnostics,
     outputs,
     durationMs: performance.now() - startedAt
   };
+}
+
+async function invokeApiCompile(command, payload) {
+  try {
+    const response = await fetch("/api/compile", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        command,
+        files: payload.files
+      })
+    });
+
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      if (result) {
+        return {
+          bridgeLabel: "Vercel API",
+          diagnostics: result.diagnostics ?? [
+            {
+              severity: "error",
+              code: "API1001",
+              message: result.message ?? `Request failed with status ${response.status}.`,
+              file: "api/compile",
+              line: 1,
+              column: 1
+            }
+          ],
+          outputs: result.outputs ?? [],
+          durationMs: result.durationMs ?? 0
+        };
+      }
+
+      throw new Error(`Request failed with status ${response.status}.`);
+    }
+
+    return {
+      ...result,
+      bridgeLabel: result?.bridgeLabel ?? "Vercel API"
+    };
+  } catch (error) {
+    if (error instanceof TypeError) {
+      const fallback = await runPreviewCompilation(payload, command);
+      return {
+        ...fallback,
+        bridgeLabel: "Browser Preview Fallback"
+      };
+    }
+    throw error;
+  }
 }
 
 function deriveMetadata(config, addonDeclaration) {
@@ -1056,6 +1120,11 @@ function formatLocation(diagnostic) {
     return "No source location.";
   }
   return `${diagnostic.file}:${diagnostic.line ?? 1}:${diagnostic.column ?? 1}`;
+}
+
+function setBridgeLabel(label) {
+  elements.bridgePill.textContent = `Bridge: ${label}`;
+  elements.bridgeMode.textContent = label;
 }
 
 function capitalize(value) {
