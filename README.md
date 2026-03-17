@@ -101,9 +101,9 @@ A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/
 
 ## Vercel Deployment
 
-Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json) and the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js). When the workbench is served over HTTP, the frontend will call `/api/compile` first and only fall back to the browser preview adapter if the API is unavailable.
+Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json), the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js), and the deployment build script [`scripts/prepare-public.js`](/c:/Users/mg4392/Downloads/temp/scripts/prepare-public.js). The `build` script copies [`web/`](/c:/Users/mg4392/Downloads/temp/web) into a generated `public/` directory so Vercel has an explicit static output directory, while the frontend calls `/api/compile` for real compiler runs.
 
-Deployment platforms such as Vercel or Render often run `npm run build` automatically. In this repo, `build` is intentionally a no-op deployment script so the platform does not try to run the compiler CLI against a missing root `bedrockc.config.json`. Use `npm run compiler:build` or `npx bedrockc build` when you want to compile an add-on project yourself.
+Deployment platforms such as Vercel or Render often run `npm run build` automatically. In this repo, `build` is the deployment packaging step only. Use `npm run compiler:build` or `npx bedrockc build` when you want to compile an add-on project yourself.
 
 ## Project Layout
 

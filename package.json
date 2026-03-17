@@ -7,10 +7,10 @@
     "bedrockc": "./src/cli/index.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": "20.x"
   },
   "scripts": {
-    "build": "node -e \"console.log('No deployment build step is required for bedrockc.')\"",
+    "build": "node ./scripts/prepare-public.js",
     "compile": "node ./src/cli/index.js compile",
     "validate": "node ./src/cli/index.js validate",
     "watch": "node ./src/cli/index.js watch",
