@@ -39,20 +39,15 @@ async function analyzeWorkspace(workspace) {
   const manifests = collectBehaviorManifests(files);
 
   for (const manifest of manifests) {
+    const fileMap = new Map(files.map((file) => [file.path, file]));
     const scriptModules = manifest.modules.filter((module) => module.type === "script");
     if (scriptModules.length === 0) {
       continue;
     }
 
-    const fileMap = new Map(files.map((file) => [file.path, file]));
-    const dependencies = new Set(
-      (Array.isArray(manifest.dependencies) ? manifest.dependencies : [])
-        .filter((dependency) => isObject(dependency) && typeof dependency.module_name === "string")
-        .map((dependency) => dependency.module_name)
-    );
-    const scriptFiles = files.filter((file) => isScriptFile(file.ext) && belongsToPack(file.path, manifest.dir));
+    const declaredDependencies = extractDeclaredModuleDependencies(manifest.dependencies);
 
-    for (const module of scriptModules) {
+    for (const [scriptModuleIndex, module] of scriptModules.entries()) {
       if (typeof module.entry !== "string" || module.entry.length === 0) {
         diagnostics.push(createDiagnostic("error", "SCR1001", "Script module is missing its 'entry' field.", manifest.path));
         continue;
@@ -72,17 +67,21 @@ async function analyzeWorkspace(workspace) {
 
       if (!isScriptFile(entryFile.ext)) {
         diagnostics.push(createDiagnostic("error", "SCR1004", `Script entry '${module.entry}' must be a .js, .mjs, or .cjs file.`, manifest.path));
+        continue;
       }
-    }
 
-    for (const file of scriptFiles) {
-      diagnostics.push(...analyzeImports(file, fileMap, manifest, dependencies));
-    }
+      const moduleFiles = collectReachableScriptFiles(entryPath, fileMap, manifest.dir);
+      const allowedDependencies = buildModuleDependencySet(declaredDependencies, scriptModuleIndex);
 
-    diagnostics.push(...runTypeCheck(scriptFiles));
+      for (const file of moduleFiles) {
+        diagnostics.push(...analyzeImports(file, fileMap, manifest, allowedDependencies));
+      }
+
+      diagnostics.push(...runTypeCheck(moduleFiles, allowedDependencies));
+    }
   }
 
-  return diagnostics.sort(compareDiagnostics);
+  return dedupeDiagnostics(diagnostics).sort(compareDiagnostics);
 }
 
 function collectBehaviorManifests(files) {
@@ -144,7 +143,7 @@ function analyzeImports(file, fileMap, manifest, dependencies) {
   return diagnostics;
 }
 
-function runTypeCheck(scriptFiles) {
+function runTypeCheck(scriptFiles, declaredDependencies = new Set()) {
   if (scriptFiles.length === 0) {
     return [];
   }
@@ -156,8 +155,15 @@ function runTypeCheck(scriptFiles) {
 
   const typings = getBundledTypings();
   virtualFiles.set(ROOT_LIB, typings.lib);
-  virtualFiles.set(SERVER_TYPES, typings.server);
-  virtualFiles.set(SERVER_UI_TYPES, typings.serverUi);
+  if (declaredDependencies.has("@minecraft/server")) {
+    virtualFiles.set(SERVER_TYPES, typings.server);
+  }
+  if (declaredDependencies.has("@minecraft/server-ui")) {
+    virtualFiles.set(SERVER_UI_TYPES, typings.serverUi);
+  }
+  for (const [fileName, sourceText] of createDependencyShims(declaredDependencies)) {
+    virtualFiles.set(fileName, sourceText);
+  }
 
   const compilerOptions = {
     allowJs: true,
@@ -194,8 +200,8 @@ function runTypeCheck(scriptFiles) {
 
   const rootNames = [
     ROOT_LIB,
-    SERVER_TYPES,
-    SERVER_UI_TYPES,
+    ...[SERVER_TYPES, SERVER_UI_TYPES].filter((fileName) => virtualFiles.has(fileName)),
+    ...[...virtualFiles.keys()].filter((fileName) => fileName.endsWith("/index.d.ts") && fileName.startsWith("/__bedrock__/node_modules/")),
     ...scriptFiles.map((file) => normalizeVirtualPath(file.path))
   ];
   const scriptRootSet = new Set(scriptFiles.map((file) => normalizeVirtualPath(file.path)));
@@ -203,6 +209,7 @@ function runTypeCheck(scriptFiles) {
 
   return ts.getPreEmitDiagnostics(program)
     .filter((diagnostic) => diagnostic.file && scriptRootSet.has(normalizeVirtualPath(diagnostic.file.fileName)))
+    .filter((diagnostic) => !shouldIgnoreTypeDiagnostic(diagnostic, declaredDependencies))
     .map((diagnostic) => convertTypeDiagnostic(diagnostic));
 }
 
@@ -343,4 +350,116 @@ function readBundledTyping(fileName) {
 
 function isObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function extractDeclaredModuleDependencies(dependencies) {
+  return (Array.isArray(dependencies) ? dependencies : [])
+    .filter((dependency) => isObject(dependency) && typeof dependency.module_name === "string")
+    .map((dependency) => dependency.module_name);
+}
+
+function buildModuleDependencySet(declaredDependencies, moduleIndex) {
+  const allowed = new Set(declaredDependencies);
+  const slottedDependency = declaredDependencies[moduleIndex];
+  if (typeof slottedDependency === "string") {
+    allowed.add(slottedDependency);
+  }
+  return allowed;
+}
+
+function collectReachableScriptFiles(entryPath, fileMap, packDir) {
+  const visited = new Set();
+  const queue = [entryPath];
+  const results = [];
+
+  while (queue.length > 0) {
+    const currentPath = queue.shift();
+    if (!currentPath || visited.has(currentPath)) {
+      continue;
+    }
+    visited.add(currentPath);
+
+    const currentFile = fileMap.get(currentPath);
+    if (!currentFile || !isScriptFile(currentFile.ext) || !belongsToPack(currentPath, packDir)) {
+      continue;
+    }
+
+    results.push(currentFile);
+    for (const imported of extractImports(currentFile.content ?? "")) {
+      if (!imported.specifier.startsWith(".")) {
+        continue;
+      }
+      const resolved = resolveScriptImport(currentFile.path, imported.specifier, fileMap);
+      if (resolved && !visited.has(resolved)) {
+        queue.push(resolved);
+      }
+    }
+  }
+
+  return results;
+}
+
+function createDependencyShims(declaredDependencies) {
+  const shims = [];
+
+  for (const moduleName of declaredDependencies) {
+    if (!moduleName.startsWith("@minecraft/")) {
+      continue;
+    }
+    if (moduleName === "@minecraft/server" || moduleName === "@minecraft/server-ui") {
+      continue;
+    }
+
+    shims.push([
+      `/__bedrock__/node_modules/${moduleName}/index.d.ts`,
+      [
+        `declare module "${moduleName}" {`,
+        "  const defaultExport: any;",
+        "  export default defaultExport;",
+        "}"
+      ].join("\n")
+    ]);
+  }
+
+  return shims;
+}
+
+function dedupeDiagnostics(diagnostics) {
+  const seen = new Set();
+  return diagnostics.filter((diagnostic) => {
+    const key = [
+      diagnostic.severity,
+      diagnostic.code,
+      diagnostic.file,
+      diagnostic.line,
+      diagnostic.column,
+      diagnostic.message
+    ].join("|");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function shouldIgnoreTypeDiagnostic(diagnostic, declaredDependencies) {
+  if (!diagnostic) {
+    return false;
+  }
+
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
+  const referencedModule = [...declaredDependencies].find(
+    (moduleName) => moduleName.startsWith("@minecraft/") && message.includes(`'${moduleName}'`)
+  );
+
+  if (!referencedModule) {
+    return false;
+  }
+
+  if (referencedModule === "@minecraft/server" || referencedModule === "@minecraft/server-ui") {
+    return false;
+  }
+
+  return diagnostic.code === 2305 || diagnostic.code === 2307 || diagnostic.code === 2614 || diagnostic.code === 2792;
 }
