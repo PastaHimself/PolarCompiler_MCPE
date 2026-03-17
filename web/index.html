@@ -167,7 +167,7 @@
                     <input id="archive-input" type="file" accept=".mcaddon,.mcpack,.zip" hidden />
                     <button class="ghost-button" id="choose-archive-button" type="button">Choose Archive</button>
                     <button class="ghost-button" id="clear-archive-button" type="button">Clear</button>
-                    <button class="primary-button" id="analyze-archive-button" type="button">Analyze Upload</button>
+                    <button class="primary-button" id="analyze-archive-button" type="button">Analyze / Reanalyze</button>
                   </div>
                 </div>
 
@@ -276,9 +276,21 @@
             <div class="output-list" id="output-file-list"></div>
             <div class="output-viewer">
               <div class="output-viewer-header">
-                <strong id="active-output-name">No output selected</strong>
-                <span class="chip chip-muted" id="active-output-kind">Text</span>
+                <div>
+                  <strong id="active-output-name">No output selected</strong>
+                  <p class="viewer-note" id="viewer-note">Preview unpacked files or generated output.</p>
+                </div>
+                <div class="viewer-toolbar">
+                  <div class="explorer-toggle">
+                    <button class="mode-button is-active" id="preview-file-button" type="button">Preview</button>
+                    <button class="mode-button" id="edit-file-button" type="button">Edit</button>
+                  </div>
+                  <button class="ghost-button" id="revert-file-button" type="button">Revert File</button>
+                  <button class="primary-button" id="download-archive-button" type="button">Download Edited Archive</button>
+                  <span class="chip chip-muted" id="active-output-kind">Text</span>
+                </div>
               </div>
+              <textarea id="output-editor" hidden spellcheck="false"></textarea>
               <pre id="output-content"></pre>
             </div>
           </div>

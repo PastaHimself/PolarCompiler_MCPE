@@ -1,4 +1,4 @@
-const TEXT_EXTENSIONS = new Set([".json", ".mcfunction", ".lang", ".txt", ".bca", ".md"]);
+const TEXT_EXTENSIONS = new Set([".bca", ".cjs", ".js", ".json", ".lang", ".mcfunction", ".md", ".mjs", ".txt"]);
 const ARCHIVE_TYPES = new Set(["zip", "mcaddon", "mcpack"]);
 
 export async function inspectArchive(file) {
@@ -28,7 +28,8 @@ export async function inspectArchive(file) {
       size: buffer.byteLength,
       ext,
       previewable,
-      content: previewable ? textDecoder.decode(buffer) : null
+      content: previewable ? textDecoder.decode(buffer) : null,
+      buffer
     });
   }
 
@@ -243,7 +244,7 @@ function validatePackFiles(pack, files, diagnostics) {
 
   if (pack.type === "behavior") {
     const hasContent = packFiles.some((file) =>
-      /\/(items|blocks|entities|recipes|loot_tables|functions|spawn_rules)\//.test(`/${file.path}`)
+      /\/(items|blocks|entities|recipes|loot_tables|functions|spawn_rules|scripts)\//.test(`/${file.path}`)
     );
     if (!hasContent) {
       diagnostics.push(

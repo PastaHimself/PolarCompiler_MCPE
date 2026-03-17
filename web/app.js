@@ -1,4 +1,16 @@
 import { buildPackagedArchiveResult, inspectArchive } from "./archiveAnalyzer.js";
+import { analyzeWorkspaceScripts } from "./scriptAnalyzerClient.js";
+import {
+  buildArchiveDownload,
+  createUploadWorkspace,
+  createWorkspaceSnapshot,
+  getWorkspaceEntry,
+  hasUnanalyzedChanges,
+  listWorkspaceEntries,
+  markWorkspaceAnalyzed,
+  revertWorkspaceFile,
+  updateWorkspaceFile
+} from "./uploadWorkspace.js";
 
 const STORAGE_KEYS = {
   source: "bedrockc.workbench.source",
@@ -73,7 +85,9 @@ const elements = {
   outputFileList: document.querySelector("#output-file-list"),
   activeOutputName: document.querySelector("#active-output-name"),
   activeOutputKind: document.querySelector("#active-output-kind"),
+  viewerNote: document.querySelector("#viewer-note"),
   outputContent: document.querySelector("#output-content"),
+  outputEditor: document.querySelector("#output-editor"),
   validateButton: document.querySelector("#validate-button"),
   buildButton: document.querySelector("#build-button"),
   watchButton: document.querySelector("#watch-button"),
@@ -96,7 +110,11 @@ const elements = {
   explorerFilesButton: document.querySelector("#explorer-files-button"),
   explorerOutputsButton: document.querySelector("#explorer-outputs-button"),
   explorerSearchInput: document.querySelector("#explorer-search-input"),
-  explorerCountChip: document.querySelector("#explorer-count-chip")
+  explorerCountChip: document.querySelector("#explorer-count-chip"),
+  previewFileButton: document.querySelector("#preview-file-button"),
+  editFileButton: document.querySelector("#edit-file-button"),
+  revertFileButton: document.querySelector("#revert-file-button"),
+  downloadArchiveButton: document.querySelector("#download-archive-button")
 };
 
 const state = {
@@ -110,9 +128,11 @@ const state = {
   activeEditorFile: "src/main.bca",
   archive: null,
   archiveSummary: null,
+  uploadWorkspace: null,
   archiveFiles: [],
   outputs: [],
   activePreviewPath: null,
+  uploadViewerMode: "preview",
   diagnostics: [],
   watchEnabled: false,
   running: false,
@@ -169,12 +189,30 @@ function attachEvents() {
     state.activePreviewPath = null;
     renderExplorer();
   });
+  elements.outputEditor.addEventListener("input", (event) => {
+    if (!state.uploadWorkspace || !state.activePreviewPath) {
+      return;
+    }
+    updateWorkspaceFile(state.uploadWorkspace, state.activePreviewPath, event.target.value);
+    syncArchiveFilesFromWorkspace();
+    renderUploadSummary();
+    renderUploadDetails();
+    refreshExplorerListDirtyState();
+    const activeEntry = getWorkspaceEntry(state.uploadWorkspace, state.activePreviewPath);
+    elements.viewerNote.textContent = activeEntry ? describeActiveEntry(activeEntry) : elements.viewerNote.textContent;
+    elements.revertFileButton.disabled = !Boolean(activeEntry?.dirty);
+    elements.downloadArchiveButton.disabled = hasUnanalyzedChanges(state.uploadWorkspace);
+  });
   elements.chooseArchiveButton.addEventListener("click", () => elements.archiveInput.click());
   elements.clearArchiveButton.addEventListener("click", clearArchiveSelection);
   elements.archiveInput.addEventListener("change", (event) => {
     void selectArchive(event.target.files?.[0] ?? null, { autoAnalyze: true });
   });
   elements.analyzeArchiveButton.addEventListener("click", () => void runArchiveAnalysis());
+  elements.previewFileButton.addEventListener("click", () => switchUploadViewerMode("preview"));
+  elements.editFileButton.addEventListener("click", () => switchUploadViewerMode("edit"));
+  elements.revertFileButton.addEventListener("click", () => revertActiveWorkspaceFile());
+  elements.downloadArchiveButton.addEventListener("click", () => void downloadEditedArchive());
   elements.archiveDropzone.addEventListener("click", () => elements.archiveInput.click());
   elements.archiveDropzone.addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -233,16 +271,45 @@ async function runArchiveAnalysis() {
   state.lastCommand = "Analyze upload";
   elements.lastCommand.textContent = state.lastCommand;
   renderRunState("Running", "status-running");
+  const startedAt = performance.now();
 
   try {
-    const inspection = await inspectArchive(state.archive);
-
-    if (inspection.modeInfo.mode === "packaged-addon") {
-      applyArchiveResult(buildPackagedArchiveResult(state.archive, inspection));
-      return;
+    if (!state.uploadWorkspace) {
+      const inspection = await inspectArchive(state.archive);
+      state.uploadWorkspace = createUploadWorkspace(state.archive, inspection);
     }
 
-    const result = await analyzeSourceArchive(inspection);
+    const snapshot = createWorkspaceSnapshot(state.uploadWorkspace);
+    let result;
+    if (snapshot.modeInfo.mode === "packaged-addon") {
+      result = buildPackagedArchiveResult(state.archive, {
+        archiveType: snapshot.archiveType,
+        files: snapshot.files,
+        durationMs: 0
+      });
+      let scriptDiagnostics = [];
+      try {
+        scriptDiagnostics = await analyzeWorkspaceScripts(state.uploadWorkspace);
+      } catch (error) {
+        scriptDiagnostics = [
+          createUiDiagnostic(
+            "error",
+            "SCR0001",
+            error.message ?? "Script analysis could not be completed in the browser."
+          )
+        ];
+      }
+      result = {
+        ...result,
+        diagnostics: [...scriptDiagnostics, ...normalizeDiagnostics(result.diagnostics)],
+        durationMs: performance.now() - startedAt
+      };
+    } else {
+      result = await analyzeSourceArchive(snapshot);
+      result.durationMs = performance.now() - startedAt;
+    }
+
+    markWorkspaceAnalyzed(state.uploadWorkspace);
     applyArchiveResult(result);
   } catch (error) {
     applyFailure(error);
@@ -252,10 +319,12 @@ async function runArchiveAnalysis() {
 }
 
 async function analyzeSourceArchive(inspection) {
-  if (!isHttpMode()) {
+  if (!isHttpMode() || (state.uploadWorkspace && state.uploadWorkspace.revision > 0)) {
     return runSourceArchivePreview(inspection, {
       routeLabel: "Browser source preview",
-      warning: "Running source archive analysis in browser preview mode because no server bridge is available."
+      warning: !isHttpMode()
+        ? "Running source archive analysis in browser preview mode because no server bridge is available."
+        : "Edited source uploads are reanalyzed in browser preview mode."
     });
   }
 
@@ -358,14 +427,19 @@ async function runSourceArchivePreview(inspection, options = {}) {
 }
 
 function applyEditorResult(result) {
+  const previousPreviewPath = state.activePreviewPath;
   state.bridgeLabel = result.bridgeLabel ?? state.bridgeLabel;
   setBridgeLabel(state.bridgeLabel);
   state.archiveSummary = null;
+  state.uploadWorkspace = null;
   state.archiveFiles = [];
   state.outputs = normalizeEntries(result.outputs);
   state.diagnostics = normalizeDiagnostics(result.diagnostics);
   state.explorerMode = state.outputs.length > 0 ? "outputs" : "files";
-  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  const nextEntries = currentExplorerEntries();
+  state.activePreviewPath = nextEntries.some((entry) => entry.path === previousPreviewPath)
+    ? previousPreviewPath
+    : nextEntries[0]?.path ?? null;
   renderAll(result.durationMs ?? 0);
   renderRunState(
     hasErrors(state.diagnostics) ? "Needs fixes" : "Ready",
@@ -374,14 +448,18 @@ function applyEditorResult(result) {
 }
 
 function applyArchiveResult(result) {
+  const previousPreviewPath = state.activePreviewPath;
   state.bridgeLabel = result.bridgeLabel ?? state.bridgeLabel;
   setBridgeLabel(state.bridgeLabel);
   state.archiveSummary = result.summary ?? null;
-  state.archiveFiles = normalizeEntries(result.files);
+  syncArchiveFilesFromWorkspace();
   state.outputs = normalizeEntries(result.outputs);
   state.diagnostics = normalizeDiagnostics(result.diagnostics);
   state.explorerMode = state.archiveFiles.length > 0 ? "files" : "outputs";
-  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  const nextEntries = currentExplorerEntries();
+  state.activePreviewPath = nextEntries.some((entry) => entry.path === previousPreviewPath)
+    ? previousPreviewPath
+    : nextEntries[0]?.path ?? null;
   renderAll(result.durationMs ?? 0);
   renderRunState(
     hasErrors(state.diagnostics) ? "Needs fixes" : "Analyzed",
@@ -456,17 +534,18 @@ function renderSummaryPanel() {
 }
 
 function renderUploadSummary() {
+  const dirtyCount = state.uploadWorkspace?.entries.filter((entry) => entry.dirty).length ?? 0;
   const items = state.archiveSummary
     ? [
         ["Detected", state.archiveSummary.detectedType ?? "Unknown"],
         ["Route", state.archiveSummary.analysisRoute ?? "Unknown"],
-        ["Files", String(state.archiveSummary.fileCount ?? 0)],
+        ["Edited", String(dirtyCount)],
         ["Duration", `${Math.round(state.lastDurationMs)}ms`]
       ]
     : [
         ["Detected", "No upload analyzed"],
         ["Route", "Awaiting selection"],
-        ["Files", "0"],
+        ["Edited", "0"],
         ["Duration", "0ms"]
       ];
 
@@ -483,6 +562,7 @@ function renderUploadSummary() {
 }
 
 function renderUploadDetails() {
+  const dirtyCount = state.uploadWorkspace?.entries.filter((entry) => entry.dirty).length ?? 0;
   const details = [
     ["File", state.archive?.name ?? "No archive selected"],
     ["Archive type", state.archive ? inferArchiveType(state.archive.name) : "Unknown"],
@@ -490,6 +570,7 @@ function renderUploadDetails() {
     ["Analysis route", state.archiveSummary?.analysisRoute ?? "Not analyzed"],
     ["Pack count", String(state.archiveSummary?.packCount ?? 0)],
     ["File count", String(state.archiveSummary?.fileCount ?? 0)],
+    ["Edited files", String(dirtyCount)],
     ["Duration", `${Math.round(state.lastDurationMs)}ms`],
     ["Size", formatBytes(state.archiveSummary?.size ?? state.archive?.size ?? 0)]
   ];
@@ -564,12 +645,16 @@ function renderDiagnostics() {
 
   for (const diagnostic of diagnostics) {
     const item = document.createElement("article");
-    item.className = `diagnostic-item is-${diagnostic.severity}`;
+    const targetEntry = diagnostic.file ? getWorkspaceEntry(state.uploadWorkspace, diagnostic.file) : null;
+    item.className = `diagnostic-item is-${diagnostic.severity}${targetEntry ? " is-clickable" : ""}`;
     item.innerHTML = `
       <strong>${diagnostic.severity.toUpperCase()} ${escapeHtml(diagnostic.code)}</strong>
       <p>${escapeHtml(diagnostic.message)}</p>
       <p>${escapeHtml(formatLocation(diagnostic))}</p>
     `;
+    if (targetEntry) {
+      item.addEventListener("click", () => openWorkspaceDiagnostic(targetEntry.path));
+    }
     elements.diagnosticList.append(item);
   }
 
@@ -593,6 +678,7 @@ function renderDiagnosticSummary(diagnostics) {
 }
 
 function renderExplorer() {
+  const uploadMode = state.workbenchMode === "upload";
   const hasFiles = state.archiveFiles.length > 0;
   const hasOutputs = state.outputs.length > 0;
 
@@ -622,11 +708,18 @@ function renderExplorer() {
         ? "No archive file selected"
         : "No output selected";
     elements.activeOutputKind.textContent = "Text";
+    elements.viewerNote.textContent = "Preview unpacked files or generated output.";
     elements.outputContent.textContent = state.explorerFilter
       ? "Change or clear the filter to see more files."
       : state.explorerMode === "files"
         ? "Upload and analyze an archive to preview unpacked files."
         : "Run a successful build to preview generated Bedrock files.";
+    elements.outputEditor.hidden = true;
+    elements.outputContent.hidden = false;
+    elements.previewFileButton.disabled = true;
+    elements.editFileButton.disabled = true;
+    elements.revertFileButton.disabled = true;
+    elements.downloadArchiveButton.disabled = !uploadMode || !state.uploadWorkspace || hasUnanalyzedChanges(state.uploadWorkspace);
     elements.copyOutputButton.disabled = true;
     return;
   }
@@ -634,10 +727,14 @@ function renderExplorer() {
   for (const entry of entries) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `output-button${entry.path === state.activePreviewPath ? " is-active" : ""}`;
-    button.textContent = entry.path;
+    button.dataset.path = entry.path;
+    button.className = `output-button${entry.path === state.activePreviewPath ? " is-active" : ""}${entry.dirty ? " is-dirty" : ""}`;
+    button.textContent = entry.dirty ? `${entry.path} *` : entry.path;
     button.addEventListener("click", () => {
       state.activePreviewPath = entry.path;
+      if (!entry.editable) {
+        state.uploadViewerMode = "preview";
+      }
       renderExplorer();
     });
     elements.outputFileList.append(button);
@@ -647,9 +744,29 @@ function renderExplorer() {
   state.activePreviewPath = activeEntry.path;
   elements.activeOutputName.textContent = activeEntry.path;
   elements.activeOutputKind.textContent = activeEntry.previewable === false ? "Binary" : activeEntry.kind.toUpperCase();
-  elements.outputContent.textContent = activeEntry.previewable === false
-    ? "Binary file preview is not available."
-    : activeEntry.content;
+  elements.viewerNote.textContent = describeActiveEntry(activeEntry);
+  const canEdit = uploadMode && state.explorerMode === "files" && activeEntry.editable;
+  if (!canEdit) {
+    state.uploadViewerMode = "preview";
+  }
+  elements.previewFileButton.classList.toggle("is-active", state.uploadViewerMode === "preview");
+  elements.editFileButton.classList.toggle("is-active", state.uploadViewerMode === "edit");
+  elements.previewFileButton.disabled = !uploadMode || !activeEntry.previewable;
+  elements.editFileButton.disabled = !canEdit;
+  elements.revertFileButton.disabled = !uploadMode || !Boolean(activeEntry.dirty);
+  elements.downloadArchiveButton.disabled = !uploadMode || !state.uploadWorkspace || hasUnanalyzedChanges(state.uploadWorkspace);
+
+  if (state.uploadViewerMode === "edit" && canEdit) {
+    elements.outputEditor.hidden = false;
+    elements.outputContent.hidden = true;
+    elements.outputEditor.value = activeEntry.content;
+  } else {
+    elements.outputEditor.hidden = true;
+    elements.outputContent.hidden = false;
+    elements.outputContent.textContent = activeEntry.previewable === false
+      ? "Binary file preview is not available."
+      : activeEntry.content;
+  }
   elements.copyOutputButton.disabled = activeEntry.previewable === false;
 }
 
@@ -696,6 +813,67 @@ function switchExplorerMode(mode) {
   renderExplorer();
 }
 
+function switchUploadViewerMode(mode) {
+  if (mode === "edit") {
+    const activeEntry = currentExplorerEntries().find((entry) => entry.path === state.activePreviewPath);
+    if (!activeEntry?.editable) {
+      return;
+    }
+  }
+  state.uploadViewerMode = mode;
+  renderExplorer();
+}
+
+function openWorkspaceDiagnostic(targetPath) {
+  state.explorerMode = "files";
+  state.activePreviewPath = targetPath;
+  state.explorerFilter = "";
+  elements.explorerSearchInput.value = "";
+  const entry = getWorkspaceEntry(state.uploadWorkspace, targetPath);
+  state.uploadViewerMode = entry?.editable ? "edit" : "preview";
+  renderExplorer();
+  scrollToSection("explorer-section");
+}
+
+function revertActiveWorkspaceFile() {
+  if (!state.uploadWorkspace || !state.activePreviewPath) {
+    return;
+  }
+  revertWorkspaceFile(state.uploadWorkspace, state.activePreviewPath);
+  syncArchiveFilesFromWorkspace();
+  renderUploadSummary();
+  renderUploadDetails();
+  renderExplorer();
+}
+
+async function downloadEditedArchive() {
+  if (!state.uploadWorkspace) {
+    return;
+  }
+  if (hasUnanalyzedChanges(state.uploadWorkspace)) {
+    state.diagnostics = [
+      createUiDiagnostic(
+        "warning",
+        "ARC5001",
+        "Reanalyze the edited upload before downloading the updated archive."
+      ),
+      ...state.diagnostics
+    ];
+    renderDiagnostics();
+    return;
+  }
+
+  const artifact = await buildArchiveDownload(state.uploadWorkspace);
+  const url = URL.createObjectURL(artifact.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = artifact.filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function toggleWatch() {
   state.watchEnabled = !state.watchEnabled;
   elements.watchButton.classList.toggle("is-toggled", state.watchEnabled);
@@ -723,10 +901,12 @@ function scheduleWatchBuild() {
 async function selectArchive(file, options = {}) {
   state.archive = file;
   state.archiveSummary = null;
+  state.uploadWorkspace = null;
   state.archiveFiles = [];
   state.outputs = [];
   state.diagnostics = [];
   state.activePreviewPath = null;
+  state.uploadViewerMode = "preview";
   state.explorerFilter = "";
   elements.explorerSearchInput.value = "";
   renderUploadSummary();
@@ -741,10 +921,12 @@ async function selectArchive(file, options = {}) {
 function clearArchiveSelection() {
   state.archive = null;
   state.archiveSummary = null;
+  state.uploadWorkspace = null;
   state.archiveFiles = [];
   state.outputs = [];
   state.diagnostics = [];
   state.activePreviewPath = null;
+  state.uploadViewerMode = "preview";
   state.explorerFilter = "";
   state.lastDurationMs = 0;
   elements.archiveInput.value = "";
@@ -1153,7 +1335,9 @@ function normalizeEntries(entries) {
     kind: entry.kind ?? inferOutputKind(entry.path),
     content: entry.content ?? "",
     previewable: entry.previewable ?? true,
-    size: entry.size ?? null
+    size: entry.size ?? null,
+    editable: entry.editable ?? false,
+    dirty: entry.dirty ?? false
   }));
 }
 
@@ -1200,6 +1384,33 @@ function filterExplorerEntries(entries, query) {
     return entries;
   }
   return entries.filter((entry) => entry.path.toLowerCase().includes(query));
+}
+
+function syncArchiveFilesFromWorkspace() {
+  state.archiveFiles = normalizeEntries(listWorkspaceEntries(state.uploadWorkspace));
+}
+
+function describeActiveEntry(entry) {
+  if (entry.previewable === false) {
+    return "Binary files can be inspected by path but not edited in the browser.";
+  }
+  if (entry.editable) {
+    return entry.dirty
+      ? "This file has unsaved analysis changes. Reanalyze before downloading the archive."
+      : "This text file can be edited directly in the browser.";
+  }
+  return "Preview-only file. Editing is limited to supported text files in upload mode.";
+}
+
+function refreshExplorerListDirtyState() {
+  for (const button of elements.outputFileList.querySelectorAll(".output-button")) {
+    const entry = state.archiveFiles.find((item) => item.path === button.dataset.path);
+    if (!entry) {
+      continue;
+    }
+    button.classList.toggle("is-dirty", Boolean(entry.dirty));
+    button.textContent = entry.dirty ? `${entry.path} *` : entry.path;
+  }
 }
 
 function onArchiveDragOver(event) {

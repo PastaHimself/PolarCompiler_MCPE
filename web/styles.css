@@ -397,6 +397,11 @@ body::before {
   background: var(--accent-soft);
 }
 
+.output-button.is-dirty {
+  border-color: rgba(217, 119, 69, 0.28);
+  background: rgba(217, 119, 69, 0.1);
+}
+
 .editor-panel {
   display: grid;
   gap: 18px;
@@ -637,6 +642,10 @@ textarea {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.diagnostic-item.is-clickable {
+  cursor: pointer;
+}
+
 .diagnostic-item strong {
   display: block;
   margin-bottom: 8px;
@@ -673,6 +682,20 @@ textarea {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+}
+
+.viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.viewer-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .output-grid {
@@ -717,6 +740,20 @@ textarea {
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.78);
+}
+
+#output-editor {
+  width: 100%;
+  min-height: 350px;
+  max-height: 540px;
+  margin-top: 16px;
+  padding: 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  resize: vertical;
+  outline: none;
 }
 
 pre {

@@ -104,6 +104,8 @@ A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/
 
 Packaged `.mcaddon`, `.mcpack`, and packaged `.zip` uploads are analyzed directly in the browser so public Vercel deployments do not fail on request-size limits. Source-project archives still use the compiler bridge when possible, and fall back to a browser preview if the public upload request is rejected.
 
+Upload mode now also supports in-browser editing for supported text files and browser-side Bedrock script validation. Script checks run against bundled Bedrock API typings, edited files stay local to the current browser session, and the workbench can download a patched archive after reanalysis.
+
 ## Vercel Deployment
 
 Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json), the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js), and the deployment build script [`scripts/prepare-public.js`](/c:/Users/mg4392/Downloads/temp/scripts/prepare-public.js). The `build` script copies [`web/`](/c:/Users/mg4392/Downloads/temp/web) into a generated `public/` directory so Vercel has an explicit static output directory, while the frontend calls `/api/compile` for real compiler runs.
