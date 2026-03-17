@@ -621,6 +621,7 @@ button {
   isolation: isolate;
   border-radius: 18px;
   overflow: hidden;
+  display: grid;
 }
 
 .code-highlight-layer {
@@ -629,6 +630,8 @@ button {
   z-index: 0;
   pointer-events: none;
   overflow: hidden;
+  width: 100%;
+  height: 100%;
 }
 
 .code-highlight-line {
