@@ -618,6 +618,7 @@ button {
 
 .code-editor-shell {
   position: relative;
+  isolation: isolate;
   border-radius: 18px;
   overflow: hidden;
 }
@@ -625,6 +626,7 @@ button {
 .code-highlight-layer {
   position: absolute;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
   overflow: hidden;
 }
@@ -662,10 +664,12 @@ textarea {
   border: 0;
   background: transparent;
   color: var(--ink);
+  caret-color: var(--ink);
+  -webkit-text-fill-color: var(--ink);
   resize: vertical;
   outline: none;
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
 
 .diagnostics-panel {
@@ -808,6 +812,8 @@ textarea {
   border: 0;
   background: transparent;
   color: #e2e8f0;
+  caret-color: #e2e8f0;
+  -webkit-text-fill-color: #e2e8f0;
   resize: vertical;
   outline: none;
 }
