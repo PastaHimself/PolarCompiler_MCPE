@@ -10,10 +10,14 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "node ./src/cli/index.js build",
+    "build": "node -e \"console.log('No deployment build step is required for bedrockc.')\"",
     "compile": "node ./src/cli/index.js compile",
     "validate": "node ./src/cli/index.js validate",
     "watch": "node ./src/cli/index.js watch",
+    "compiler:build": "node ./src/cli/index.js build",
+    "compiler:compile": "node ./src/cli/index.js compile",
+    "compiler:validate": "node ./src/cli/index.js validate",
+    "compiler:watch": "node ./src/cli/index.js watch",
     "test": "node --test ./test/*.test.js"
   }
 }

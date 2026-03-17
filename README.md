@@ -16,7 +16,7 @@
 
 ```bash
 npm install
-npm run build -- --config ./examples/hello-addon/bedrockc.config.json
+npm run compile -- --config ./examples/hello-addon/bedrockc.config.json
 ```
 
 ## Source Language
@@ -84,9 +84,15 @@ locale en_US {
 ## CLI
 
 ```bash
-bedrockc build --config ./bedrockc.config.json
-bedrockc validate --config ./bedrockc.config.json
-bedrockc watch --config ./bedrockc.config.json --debounce 75
+npx bedrockc build --config ./bedrockc.config.json
+npx bedrockc validate --config ./bedrockc.config.json
+npx bedrockc watch --config ./bedrockc.config.json --debounce 75
+```
+
+```bash
+npm run compiler:build -- --config ./bedrockc.config.json
+npm run compiler:validate -- --config ./bedrockc.config.json
+npm run compiler:watch -- --config ./bedrockc.config.json --debounce 75
 ```
 
 ## Web Workbench
@@ -96,6 +102,8 @@ A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/
 ## Vercel Deployment
 
 Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json) and the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js). When the workbench is served over HTTP, the frontend will call `/api/compile` first and only fall back to the browser preview adapter if the API is unavailable.
+
+Deployment platforms such as Vercel or Render often run `npm run build` automatically. In this repo, `build` is intentionally a no-op deployment script so the platform does not try to run the compiler CLI against a missing root `bedrockc.config.json`. Use `npm run compiler:build` or `npx bedrockc build` when you want to compile an add-on project yourself.
 
 ## Project Layout
 
