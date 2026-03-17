@@ -104,6 +104,7 @@ const elements = {
   chooseArchiveButton: document.querySelector("#choose-archive-button"),
   clearArchiveButton: document.querySelector("#clear-archive-button"),
   analyzeArchiveButton: document.querySelector("#analyze-archive-button"),
+  uploadWatchButton: document.querySelector("#upload-watch-button"),
   archiveDropzone: document.querySelector("#archive-dropzone"),
   selectedArchiveLabel: document.querySelector("#selected-archive-label"),
   uploadDetailGrid: document.querySelector("#upload-detail-grid"),
@@ -135,6 +136,7 @@ const state = {
   uploadViewerMode: "preview",
   diagnostics: [],
   watchEnabled: false,
+  uploadWatchEnabled: false,
   running: false,
   lastCommand: "Not run yet",
   bridgeLabel: isHttpMode() ? "Vercel API" : "Browser Preview",
@@ -176,6 +178,7 @@ function attachEvents() {
   elements.buildButton.addEventListener("click", () => void runEditorCommand("build"));
   elements.resetButton.addEventListener("click", resetSample);
   elements.watchButton.addEventListener("click", toggleWatch);
+  elements.uploadWatchButton.addEventListener("click", toggleUploadWatch);
   elements.copyOutputButton.addEventListener("click", () => void copyActivePreview());
   elements.modeEditorButton.addEventListener("click", () => switchWorkbenchMode("editor"));
   elements.modeUploadButton.addEventListener("click", () => switchWorkbenchMode("upload"));
@@ -202,6 +205,9 @@ function attachEvents() {
     elements.viewerNote.textContent = activeEntry ? describeActiveEntry(activeEntry) : elements.viewerNote.textContent;
     elements.revertFileButton.disabled = !Boolean(activeEntry?.dirty);
     elements.downloadArchiveButton.disabled = hasUnanalyzedChanges(state.uploadWorkspace);
+    if (state.uploadWatchEnabled && state.workbenchMode === "upload") {
+      scheduleUploadWatchAnalysis();
+    }
   });
   elements.chooseArchiveButton.addEventListener("click", () => elements.archiveInput.click());
   elements.clearArchiveButton.addEventListener("click", clearArchiveSelection);
@@ -488,6 +494,7 @@ function applyFailure(error) {
 function renderAll(durationMs) {
   state.lastDurationMs = durationMs ?? 0;
   renderMode();
+  renderWatchState();
   renderSummaryPanel();
   renderUploadSummary();
   renderUploadDetails();
@@ -791,13 +798,13 @@ function switchWorkbenchMode(mode) {
     state.watchEnabled = false;
     elements.watchButton.classList.remove("is-toggled");
     elements.watchButton.textContent = "Watch Off";
-    elements.watchState.textContent = "Disabled";
     if (state.archiveFiles.length > 0) {
       state.explorerMode = "files";
     }
   } else if (state.outputs.length > 0) {
     state.explorerMode = "outputs";
   }
+  renderWatchState();
   renderAll(state.lastDurationMs);
 }
 
@@ -844,6 +851,9 @@ function revertActiveWorkspaceFile() {
   renderUploadSummary();
   renderUploadDetails();
   renderExplorer();
+  if (state.uploadWatchEnabled && state.workbenchMode === "upload") {
+    scheduleUploadWatchAnalysis();
+  }
 }
 
 async function downloadEditedArchive() {
@@ -878,11 +888,24 @@ function toggleWatch() {
   state.watchEnabled = !state.watchEnabled;
   elements.watchButton.classList.toggle("is-toggled", state.watchEnabled);
   elements.watchButton.textContent = state.watchEnabled ? "Watch On" : "Watch Off";
-  elements.watchState.textContent = state.watchEnabled ? "Enabled" : "Disabled";
+  renderWatchState();
 
   if (state.watchEnabled) {
     scheduleWatchBuild();
   } else if (watchTimer) {
+    clearTimeout(watchTimer);
+  }
+}
+
+function toggleUploadWatch() {
+  state.uploadWatchEnabled = !state.uploadWatchEnabled;
+  elements.uploadWatchButton.classList.toggle("is-toggled", state.uploadWatchEnabled);
+  elements.uploadWatchButton.textContent = state.uploadWatchEnabled ? "Watch Upload On" : "Watch Upload Off";
+  renderWatchState();
+
+  if (state.uploadWatchEnabled) {
+    scheduleUploadWatchAnalysis();
+  } else if (watchTimer && state.workbenchMode === "upload") {
     clearTimeout(watchTimer);
   }
 }
@@ -894,6 +917,23 @@ function scheduleWatchBuild() {
   watchTimer = setTimeout(() => {
     if (state.workbenchMode === "editor") {
       void runEditorCommand("build", true);
+    }
+  }, 600);
+}
+
+function scheduleUploadWatchAnalysis() {
+  if (watchTimer) {
+    clearTimeout(watchTimer);
+  }
+  watchTimer = setTimeout(() => {
+    if (
+      state.workbenchMode === "upload"
+      && state.uploadWatchEnabled
+      && !state.running
+      && state.uploadWorkspace
+      && hasUnanalyzedChanges(state.uploadWorkspace)
+    ) {
+      void runArchiveAnalysis();
     }
   }, 600);
 }
@@ -931,8 +971,23 @@ function clearArchiveSelection() {
   state.lastDurationMs = 0;
   elements.archiveInput.value = "";
   elements.explorerSearchInput.value = "";
+  renderWatchState();
   renderAll(0);
   renderRunState("Idle", "status-idle");
+}
+
+function renderWatchState() {
+  if (state.workbenchMode === "upload" && state.uploadWatchEnabled) {
+    elements.watchState.textContent = "Enabled (Upload)";
+    return;
+  }
+
+  if (state.workbenchMode === "editor" && state.watchEnabled) {
+    elements.watchState.textContent = "Enabled (Editor)";
+    return;
+  }
+
+  elements.watchState.textContent = "Disabled";
 }
 
 function resetSample() {

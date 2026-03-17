@@ -104,7 +104,7 @@ A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/
 
 Packaged `.mcaddon`, `.mcpack`, and packaged `.zip` uploads are analyzed directly in the browser so public Vercel deployments do not fail on request-size limits. Source-project archives still use the compiler bridge when possible, and fall back to a browser preview if the public upload request is rejected.
 
-Upload mode now also supports in-browser editing for supported text files and browser-side Bedrock script validation. Script checks run against bundled Bedrock API typings, edited files stay local to the current browser session, and the workbench can download a patched archive after reanalysis.
+Upload mode now also supports in-browser editing for supported text files, browser-side Bedrock script validation, and an upload watch toggle that automatically reruns archive analysis after file edits or reverts. Script checks run against bundled Bedrock API typings, edited files stay local to the current browser session, and the workbench can download a patched archive after reanalysis.
 
 ## Vercel Deployment
 
