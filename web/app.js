@@ -64,9 +64,13 @@ const editorFiles = [
 ];
 
 const elements = {
+  pageShell: document.querySelector(".page-shell"),
   bridgePill: document.querySelector("#bridge-pill"),
   runStatePill: document.querySelector("#run-state-pill"),
+  currentModeLabel: document.querySelector("#current-mode-label"),
   summaryPanel: document.querySelector("#summary-panel"),
+  leftRailToggleButton: document.querySelector("#left-rail-toggle-button"),
+  rightRailToggleButton: document.querySelector("#right-rail-toggle-button"),
   editorNavSection: document.querySelector("#editor-nav-section"),
   uploadNavSection: document.querySelector("#upload-nav-section"),
   editorFileList: document.querySelector("#editor-file-list"),
@@ -140,6 +144,8 @@ const state = {
   diagnostics: [],
   watchEnabled: false,
   uploadWatchEnabled: false,
+  leftRailCollapsed: false,
+  rightRailCollapsed: false,
   running: false,
   lastCommand: "Not run yet",
   bridgeLabel: isHttpMode() ? "Vercel API" : "Browser Preview",
@@ -153,6 +159,7 @@ initialize();
 function initialize() {
   setBridgeLabel(state.bridgeLabel);
   attachEvents();
+  renderRails();
   renderEditorFileButtons();
   renderEditorTabs();
   renderEditor();
@@ -184,6 +191,8 @@ function attachEvents() {
   elements.resetButton.addEventListener("click", resetSample);
   elements.watchButton.addEventListener("click", toggleWatch);
   elements.uploadWatchButton.addEventListener("click", toggleUploadWatch);
+  elements.leftRailToggleButton.addEventListener("click", () => toggleRail("left"));
+  elements.rightRailToggleButton.addEventListener("click", () => toggleRail("right"));
   elements.copyOutputButton.addEventListener("click", () => void copyActivePreview());
   elements.modeEditorButton.addEventListener("click", () => switchWorkbenchMode("editor"));
   elements.modeUploadButton.addEventListener("click", () => switchWorkbenchMode("upload"));
@@ -500,6 +509,7 @@ function applyFailure(error) {
 
 function renderAll(durationMs) {
   state.lastDurationMs = durationMs ?? 0;
+  renderRails();
   renderMode();
   renderWatchState();
   renderSummaryPanel();
@@ -514,6 +524,7 @@ function renderMode() {
   const editorMode = state.workbenchMode === "editor";
   elements.modeEditorButton.classList.toggle("is-active", editorMode);
   elements.modeUploadButton.classList.toggle("is-active", !editorMode);
+  elements.currentModeLabel.textContent = editorMode ? "Editor" : "Upload";
   elements.editorWorkbench.hidden = !editorMode;
   elements.uploadWorkbench.hidden = editorMode;
   elements.editorNavSection.hidden = !editorMode;
@@ -809,6 +820,13 @@ function renderRunState(label, className) {
   elements.runStatePill.className = `status-pill ${className}`;
 }
 
+function renderRails() {
+  elements.pageShell.classList.toggle("is-left-rail-collapsed", state.leftRailCollapsed);
+  elements.pageShell.classList.toggle("is-right-rail-collapsed", state.rightRailCollapsed);
+  elements.leftRailToggleButton.textContent = state.leftRailCollapsed ? "Project +" : "Project";
+  elements.rightRailToggleButton.textContent = state.rightRailCollapsed ? "Inspector +" : "Inspector";
+}
+
 function switchWorkbenchMode(mode) {
   state.workbenchMode = mode;
   if (mode === "upload") {
@@ -1018,6 +1036,15 @@ function renderWatchState() {
   }
 
   elements.watchState.textContent = "Disabled";
+}
+
+function toggleRail(side) {
+  if (side === "left") {
+    state.leftRailCollapsed = !state.leftRailCollapsed;
+  } else {
+    state.rightRailCollapsed = !state.rightRailCollapsed;
+  }
+  renderRails();
 }
 
 function renderEditorHighlights() {
