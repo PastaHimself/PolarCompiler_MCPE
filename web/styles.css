@@ -72,6 +72,14 @@ body::before {
   align-items: center;
   gap: 24px;
   margin-bottom: 22px;
+  position: sticky;
+  top: 14px;
+  z-index: 40;
+  padding: 18px 22px;
+  background: rgba(255, 250, 242, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 16px 44px rgba(49, 59, 67, 0.08);
 }
 
 .brand {
@@ -166,6 +174,19 @@ body::before {
   justify-content: space-between;
   align-items: center;
   gap: 18px;
+  position: sticky;
+  top: 106px;
+  z-index: 32;
+}
+
+.mode-switch-copy {
+  min-width: 0;
+}
+
+.mode-switch-meta {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
 }
 
 .mode-switch-actions,
@@ -175,6 +196,29 @@ body::before {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.jump-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.jump-button {
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.jump-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(19, 90, 114, 0.22);
+  background: rgba(19, 90, 114, 0.08);
+  color: var(--accent-strong);
 }
 
 .mode-button {
@@ -190,6 +234,16 @@ body::before {
   background: var(--accent-soft);
   color: var(--accent-strong);
   border-color: rgba(19, 90, 114, 0.25);
+}
+
+.mode-button:disabled,
+.ghost-button:disabled,
+.primary-button:disabled,
+.jump-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .panel,
@@ -265,6 +319,15 @@ body::before {
   padding: 22px;
 }
 
+.nav-panel,
+.insight-panel {
+  position: sticky;
+  top: 192px;
+  align-self: start;
+  max-height: calc(100vh - 214px);
+  overflow: auto;
+}
+
 .panel-section + .panel-section {
   margin-top: 26px;
 }
@@ -303,6 +366,13 @@ body::before {
   gap: 10px;
 }
 
+.output-list,
+.diagnostic-list {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .file-button,
 .output-button {
   width: 100%;
@@ -337,6 +407,44 @@ body::before {
   gap: 18px;
 }
 
+.upload-step-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.step-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.step-card strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.step-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.step-index {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
 .upload-command-bar {
   margin-bottom: 0;
 }
@@ -366,6 +474,11 @@ body::before {
 .dropzone p {
   margin: 0;
   color: var(--muted);
+}
+
+.dropzone-note {
+  max-width: 34ch;
+  font-size: 0.92rem;
 }
 
 .upload-detail-card {
@@ -510,6 +623,13 @@ textarea {
   min-height: 320px;
 }
 
+.diagnostic-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
 .diagnostic-item {
   padding: 14px 16px;
   border-radius: 16px;
@@ -560,6 +680,35 @@ textarea {
   grid-template-columns: minmax(230px, 280px) minmax(0, 1fr);
   gap: 18px;
   margin-top: 18px;
+}
+
+.explorer-tools {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.search-field {
+  display: flex;
+  align-items: center;
+  width: min(100%, 420px);
+}
+
+.search-field input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  font: inherit;
+}
+
+.search-field input:focus {
+  outline: 2px solid rgba(19, 90, 114, 0.18);
+  border-color: rgba(19, 90, 114, 0.28);
 }
 
 .output-viewer {
@@ -620,6 +769,19 @@ pre {
   .hero-card h2 {
     max-width: none;
   }
+
+  .topbar,
+  .mode-switch,
+  .nav-panel,
+  .insight-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .upload-step-strip {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -629,10 +791,28 @@ pre {
 
   .topbar,
   .command-bar,
+  .mode-switch,
   .output-header,
   .output-viewer-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .mode-switch-meta,
+  .explorer-tools {
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .mode-switch-actions,
+  .jump-nav,
+  .search-field {
+    width: 100%;
+  }
+
+  .mode-button,
+  .jump-button {
+    flex: 1 1 0;
   }
 
   textarea {

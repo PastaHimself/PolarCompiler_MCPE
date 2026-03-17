@@ -61,17 +61,24 @@
         </section>
 
         <div class="mode-switch panel">
-          <div>
+          <div class="mode-switch-copy">
             <p class="eyebrow">Workbench Mode</p>
             <h3>Choose how you want to analyze add-ons.</h3>
           </div>
-          <div class="mode-switch-actions">
-            <button class="mode-button is-active" id="mode-editor-button" type="button">Editor</button>
-            <button class="mode-button" id="mode-upload-button" type="button">Upload</button>
+          <div class="mode-switch-meta">
+            <div class="mode-switch-actions">
+              <button class="mode-button is-active" id="mode-editor-button" type="button">Editor</button>
+              <button class="mode-button" id="mode-upload-button" type="button">Upload</button>
+            </div>
+            <div class="jump-nav" aria-label="Quick navigation">
+              <button class="jump-button" id="jump-workbench-button" type="button">Workbench</button>
+              <button class="jump-button" id="jump-diagnostics-button" type="button">Diagnostics</button>
+              <button class="jump-button" id="jump-explorer-button" type="button">Explorer</button>
+            </div>
           </div>
         </div>
 
-        <div class="workbench-grid">
+        <div class="workbench-grid" id="workbench-section">
           <aside class="panel nav-panel">
             <section class="panel-section">
               <div class="section-heading">
@@ -108,7 +115,7 @@
                   <strong id="metric-diagnostics">0</strong>
                 </article>
                 <article>
-                  <span>Generated files</span>
+                  <span>Files in view</span>
                   <strong id="metric-outputs">0</strong>
                 </article>
                 <article>
@@ -159,13 +166,39 @@
                   <div class="command-actions">
                     <input id="archive-input" type="file" accept=".mcaddon,.mcpack,.zip" hidden />
                     <button class="ghost-button" id="choose-archive-button" type="button">Choose Archive</button>
+                    <button class="ghost-button" id="clear-archive-button" type="button">Clear</button>
                     <button class="primary-button" id="analyze-archive-button" type="button">Analyze Upload</button>
                   </div>
+                </div>
+
+                <div class="upload-step-strip">
+                  <article class="step-card">
+                    <span class="step-index">1</span>
+                    <div>
+                      <strong>Select an archive</strong>
+                      <p>Pick one `.mcaddon`, `.mcpack`, or `.zip` file.</p>
+                    </div>
+                  </article>
+                  <article class="step-card">
+                    <span class="step-index">2</span>
+                    <div>
+                      <strong>Route it correctly</strong>
+                      <p>Packaged add-ons stay in the browser. Source projects use the compiler bridge.</p>
+                    </div>
+                  </article>
+                  <article class="step-card">
+                    <span class="step-index">3</span>
+                    <div>
+                      <strong>Inspect the results</strong>
+                      <p>Read diagnostics first, then browse manifests, files, and generated output.</p>
+                    </div>
+                  </article>
                 </div>
 
                 <div class="dropzone" id="archive-dropzone" tabindex="0" role="button">
                   <strong>Drop an archive here</strong>
                   <p>Accepted formats: `.mcaddon`, `.mcpack`, `.zip`</p>
+                  <p class="dropzone-note">Large packaged add-ons are analyzed in your browser to avoid public upload limits.</p>
                   <span class="chip chip-muted" id="selected-archive-label">No file selected</span>
                 </div>
 
@@ -202,17 +235,21 @@
               </div>
             </section>
 
-            <section class="panel-section diagnostics-panel">
+            <section class="panel-section diagnostics-panel" id="diagnostics-section">
               <div class="section-heading">
                 <p class="eyebrow">Diagnostics</p>
                 <h3>Compiler Messages</h3>
+              </div>
+              <div class="diagnostic-toolbar">
+                <span class="chip" id="diagnostic-status-chip">No errors</span>
+                <span class="chip chip-muted" id="diagnostic-count-chip">0 messages</span>
               </div>
               <div class="diagnostic-list" id="diagnostic-list"></div>
             </section>
           </aside>
         </div>
 
-        <section class="panel output-panel">
+        <section class="panel output-panel" id="explorer-section">
           <div class="output-header">
             <div>
               <p class="eyebrow">Explorer</p>
@@ -225,6 +262,14 @@
               </div>
               <button class="ghost-button" id="copy-output-button" type="button">Copy File</button>
             </div>
+          </div>
+
+          <div class="explorer-tools">
+            <label class="search-field">
+              <span class="screenreader-only">Filter explorer files</span>
+              <input id="explorer-search-input" type="search" placeholder="Filter paths, manifests, functions, textures..." />
+            </label>
+            <span class="chip chip-muted" id="explorer-count-chip">0 shown</span>
           </div>
 
           <div class="output-grid">
@@ -241,6 +286,7 @@
       </main>
     </div>
 
+    <script src="./vendor/jszip.min.js"></script>
     <script type="module" src="./app.js"></script>
   </body>
 </html>

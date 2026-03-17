@@ -1,3 +1,5 @@
+import { buildPackagedArchiveResult, inspectArchive } from "./archiveAnalyzer.js";
+
 const STORAGE_KEYS = {
   source: "bedrockc.workbench.source",
   config: "bedrockc.workbench.config"
@@ -66,6 +68,8 @@ const elements = {
   bridgeMode: document.querySelector("#bridge-mode"),
   watchState: document.querySelector("#watch-state"),
   diagnosticList: document.querySelector("#diagnostic-list"),
+  diagnosticStatusChip: document.querySelector("#diagnostic-status-chip"),
+  diagnosticCountChip: document.querySelector("#diagnostic-count-chip"),
   outputFileList: document.querySelector("#output-file-list"),
   activeOutputName: document.querySelector("#active-output-name"),
   activeOutputKind: document.querySelector("#active-output-kind"),
@@ -77,21 +81,28 @@ const elements = {
   copyOutputButton: document.querySelector("#copy-output-button"),
   modeEditorButton: document.querySelector("#mode-editor-button"),
   modeUploadButton: document.querySelector("#mode-upload-button"),
+  jumpWorkbenchButton: document.querySelector("#jump-workbench-button"),
+  jumpDiagnosticsButton: document.querySelector("#jump-diagnostics-button"),
+  jumpExplorerButton: document.querySelector("#jump-explorer-button"),
   editorWorkbench: document.querySelector("#editor-workbench"),
   uploadWorkbench: document.querySelector("#upload-workbench"),
   archiveInput: document.querySelector("#archive-input"),
   chooseArchiveButton: document.querySelector("#choose-archive-button"),
+  clearArchiveButton: document.querySelector("#clear-archive-button"),
   analyzeArchiveButton: document.querySelector("#analyze-archive-button"),
   archiveDropzone: document.querySelector("#archive-dropzone"),
   selectedArchiveLabel: document.querySelector("#selected-archive-label"),
   uploadDetailGrid: document.querySelector("#upload-detail-grid"),
   explorerFilesButton: document.querySelector("#explorer-files-button"),
-  explorerOutputsButton: document.querySelector("#explorer-outputs-button")
+  explorerOutputsButton: document.querySelector("#explorer-outputs-button"),
+  explorerSearchInput: document.querySelector("#explorer-search-input"),
+  explorerCountChip: document.querySelector("#explorer-count-chip")
 };
 
 const state = {
   workbenchMode: "editor",
-  explorerMode: "files",
+  explorerMode: "outputs",
+  explorerFilter: "",
   files: {
     "src/main.bca": loadStoredValue(STORAGE_KEYS.source, SAMPLE_SOURCE),
     "bedrockc.config.json": loadStoredValue(STORAGE_KEYS.config, SAMPLE_CONFIG)
@@ -106,7 +117,8 @@ const state = {
   watchEnabled: false,
   running: false,
   lastCommand: "Not run yet",
-  bridgeLabel: isHttpMode() ? "Vercel API" : "Browser Preview"
+  bridgeLabel: isHttpMode() ? "Vercel API" : "Browser Preview",
+  lastDurationMs: 0
 };
 
 let watchTimer = null;
@@ -147,16 +159,32 @@ function attachEvents() {
   elements.copyOutputButton.addEventListener("click", () => void copyActivePreview());
   elements.modeEditorButton.addEventListener("click", () => switchWorkbenchMode("editor"));
   elements.modeUploadButton.addEventListener("click", () => switchWorkbenchMode("upload"));
+  elements.jumpWorkbenchButton.addEventListener("click", () => scrollToSection("workbench-section"));
+  elements.jumpDiagnosticsButton.addEventListener("click", () => scrollToSection("diagnostics-section"));
+  elements.jumpExplorerButton.addEventListener("click", () => scrollToSection("explorer-section"));
   elements.explorerFilesButton.addEventListener("click", () => switchExplorerMode("files"));
   elements.explorerOutputsButton.addEventListener("click", () => switchExplorerMode("outputs"));
+  elements.explorerSearchInput.addEventListener("input", (event) => {
+    state.explorerFilter = event.target.value.trim().toLowerCase();
+    state.activePreviewPath = null;
+    renderExplorer();
+  });
   elements.chooseArchiveButton.addEventListener("click", () => elements.archiveInput.click());
+  elements.clearArchiveButton.addEventListener("click", clearArchiveSelection);
   elements.archiveInput.addEventListener("change", (event) => {
-    selectArchive(event.target.files?.[0] ?? null);
+    void selectArchive(event.target.files?.[0] ?? null, { autoAnalyze: true });
   });
   elements.analyzeArchiveButton.addEventListener("click", () => void runArchiveAnalysis());
+  elements.archiveDropzone.addEventListener("click", () => elements.archiveInput.click());
+  elements.archiveDropzone.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      elements.archiveInput.click();
+    }
+  });
   elements.archiveDropzone.addEventListener("dragover", onArchiveDragOver);
   elements.archiveDropzone.addEventListener("dragleave", onArchiveDragLeave);
-  elements.archiveDropzone.addEventListener("drop", onArchiveDrop);
+  elements.archiveDropzone.addEventListener("drop", (event) => void onArchiveDrop(event));
 }
 
 async function runEditorCommand(command, fromWatch = false) {
@@ -207,13 +235,126 @@ async function runArchiveAnalysis() {
   renderRunState("Running", "status-running");
 
   try {
-    const result = await invokeApiArchive(state.archive);
+    const inspection = await inspectArchive(state.archive);
+
+    if (inspection.modeInfo.mode === "packaged-addon") {
+      applyArchiveResult(buildPackagedArchiveResult(state.archive, inspection));
+      return;
+    }
+
+    const result = await analyzeSourceArchive(inspection);
     applyArchiveResult(result);
   } catch (error) {
     applyFailure(error);
   } finally {
     state.running = false;
   }
+}
+
+async function analyzeSourceArchive(inspection) {
+  if (!isHttpMode()) {
+    return runSourceArchivePreview(inspection, {
+      routeLabel: "Browser source preview",
+      warning: "Running source archive analysis in browser preview mode because no server bridge is available."
+    });
+  }
+
+  try {
+    return await invokeApiArchive(state.archive);
+  } catch (error) {
+    if (error.status === 413) {
+      return runSourceArchivePreview(inspection, {
+        routeLabel: "Browser source preview",
+        warning:
+          "The public upload bridge rejected this source archive before the compiler ran. A browser preview was generated instead."
+      });
+    }
+    throw error;
+  }
+}
+
+async function runSourceArchivePreview(inspection, options = {}) {
+  const configPath = inspection.modeInfo.configPath;
+  const archiveMap = new Map(inspection.files.map((file) => [file.path, file]));
+  const configFile = archiveMap.get(configPath);
+  const diagnostics = [];
+  let configContent = configFile?.content ?? "{}";
+  let sourceContent = "";
+
+  if (!configFile) {
+    diagnostics.push(createUiDiagnostic("error", "ARC4101", "Source archive is missing bedrockc.config.json."));
+  } else {
+    try {
+      const configJson = JSON.parse(configContent);
+      const entryPath = resolveArchivePath(dirname(configPath), configJson.entry ?? "./src/main.bca");
+      const entryFile = archiveMap.get(entryPath);
+      if (!entryFile) {
+        diagnostics.push(
+          createUiDiagnostic("error", "ARC4102", `Configured entry file '${entryPath}' was not found in the archive.`)
+        );
+      } else {
+        sourceContent = entryFile.content ?? "";
+      }
+
+      const sourceFileCount = inspection.files.filter((file) => file.ext === ".bca").length;
+      if (sourceFileCount > 1) {
+        diagnostics.push(
+          createUiDiagnostic(
+            "warning",
+            "ARC4103",
+            "Browser preview uses the configured entry file only. Multi-file source archives still need the server compiler for full resolution."
+          )
+        );
+      }
+    } catch (error) {
+      diagnostics.push(createUiDiagnostic("error", "ARC4104", `Config parse failed: ${error.message}`));
+    }
+  }
+
+  let previewResult = {
+    bridgeLabel: options.routeLabel ?? "Browser source preview",
+    diagnostics: [],
+    outputs: [],
+    durationMs: 0
+  };
+
+  if (!hasErrors(diagnostics) && sourceContent) {
+    previewResult = await runPreviewCompilation("build", {
+      "bedrockc.config.json": configContent,
+      "src/main.bca": sourceContent
+    });
+  }
+
+  if (options.warning) {
+    diagnostics.unshift(createUiDiagnostic("warning", "ARC4100", options.warning));
+  }
+
+  const allDiagnostics = [...diagnostics, ...normalizeDiagnostics(previewResult.diagnostics)];
+
+  return {
+    bridgeLabel: options.routeLabel ?? "Browser source preview",
+    mode: "source-archive",
+    archiveType: inspection.archiveType,
+    summary: {
+      filename: state.archive?.name ?? "archive.zip",
+      size: state.archive?.size ?? 0,
+      detectedType: "bedrockc source project",
+      analysisRoute: options.routeLabel ?? "Browser source preview",
+      configPath,
+      packCount: 0,
+      fileCount: inspection.files.length
+    },
+    diagnostics: allDiagnostics,
+    files: inspection.files.map((file) => ({
+      path: file.path,
+      kind: file.ext === ".json" ? "json" : "text",
+      previewable: file.previewable,
+      content: file.previewable ? file.content ?? "" : null,
+      size: file.size
+    })),
+    outputs: normalizeEntries(previewResult.outputs),
+    durationMs: inspection.durationMs + (previewResult.durationMs ?? 0)
+  };
 }
 
 function applyEditorResult(result) {
@@ -226,7 +367,10 @@ function applyEditorResult(result) {
   state.explorerMode = state.outputs.length > 0 ? "outputs" : "files";
   state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
   renderAll(result.durationMs ?? 0);
-  renderRunState(hasErrors(state.diagnostics) ? "Needs fixes" : "Ready", hasErrors(state.diagnostics) ? "status-error" : "status-success");
+  renderRunState(
+    hasErrors(state.diagnostics) ? "Needs fixes" : "Ready",
+    hasErrors(state.diagnostics) ? "status-error" : "status-success"
+  );
 }
 
 function applyArchiveResult(result) {
@@ -236,24 +380,27 @@ function applyArchiveResult(result) {
   state.archiveFiles = normalizeEntries(result.files);
   state.outputs = normalizeEntries(result.outputs);
   state.diagnostics = normalizeDiagnostics(result.diagnostics);
-  state.explorerMode = "files";
+  state.explorerMode = state.archiveFiles.length > 0 ? "files" : "outputs";
   state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
   renderAll(result.durationMs ?? 0);
-  renderRunState(hasErrors(state.diagnostics) ? "Needs fixes" : "Analyzed", hasErrors(state.diagnostics) ? "status-error" : "status-success");
+  renderRunState(
+    hasErrors(state.diagnostics) ? "Needs fixes" : "Analyzed",
+    hasErrors(state.diagnostics) ? "status-error" : "status-success"
+  );
 }
 
 function applyFailure(error) {
+  const message = error?.message ?? "Unexpected workbench failure.";
   state.diagnostics = [
     {
       severity: "error",
       code: "UI9001",
-      message: error.message ?? "Unexpected workbench failure.",
+      message,
       file: "workbench",
       line: 1,
       column: 1
     }
   ];
-  state.archiveFiles = [];
   state.outputs = [];
   state.activePreviewPath = null;
   renderAll(0);
@@ -261,13 +408,14 @@ function applyFailure(error) {
 }
 
 function renderAll(durationMs) {
+  state.lastDurationMs = durationMs ?? 0;
   renderMode();
   renderSummaryPanel();
   renderUploadSummary();
   renderUploadDetails();
   renderDiagnostics();
   renderExplorer();
-  renderMetrics(durationMs);
+  renderMetrics(state.lastDurationMs);
 }
 
 function renderMode() {
@@ -292,7 +440,7 @@ function renderSummaryPanel() {
         ["Mode", "Upload"],
         ["Archive", state.archive?.name ?? "None selected"],
         ["Detected", state.archiveSummary?.detectedType ?? "Awaiting upload"],
-        ["Type", state.archive ? inferArchiveType(state.archive.name) : "Unknown"]
+        ["Route", state.archiveSummary?.analysisRoute ?? "Not analyzed"]
       ];
 
   elements.summaryPanel.innerHTML = entries
@@ -311,15 +459,15 @@ function renderUploadSummary() {
   const items = state.archiveSummary
     ? [
         ["Detected", state.archiveSummary.detectedType ?? "Unknown"],
-        ["Packs", String(state.archiveSummary.packCount ?? 0)],
+        ["Route", state.archiveSummary.analysisRoute ?? "Unknown"],
         ["Files", String(state.archiveSummary.fileCount ?? 0)],
-        ["Size", formatBytes(state.archiveSummary.size ?? state.archive?.size ?? 0)]
+        ["Duration", `${Math.round(state.lastDurationMs)}ms`]
       ]
     : [
         ["Detected", "No upload analyzed"],
-        ["Packs", "0"],
+        ["Route", "Awaiting selection"],
         ["Files", "0"],
-        ["Size", formatBytes(state.archive?.size ?? 0)]
+        ["Duration", "0ms"]
       ];
 
   elements.uploadSummaryList.innerHTML = items
@@ -339,8 +487,10 @@ function renderUploadDetails() {
     ["File", state.archive?.name ?? "No archive selected"],
     ["Archive type", state.archive ? inferArchiveType(state.archive.name) : "Unknown"],
     ["Detected project", state.archiveSummary?.detectedType ?? "Awaiting analysis"],
+    ["Analysis route", state.archiveSummary?.analysisRoute ?? "Not analyzed"],
     ["Pack count", String(state.archiveSummary?.packCount ?? 0)],
     ["File count", String(state.archiveSummary?.fileCount ?? 0)],
+    ["Duration", `${Math.round(state.lastDurationMs)}ms`],
     ["Size", formatBytes(state.archiveSummary?.size ?? state.archive?.size ?? 0)]
   ];
 
@@ -422,21 +572,62 @@ function renderDiagnostics() {
     `;
     elements.diagnosticList.append(item);
   }
+
+  renderDiagnosticSummary(diagnostics);
+}
+
+function renderDiagnosticSummary(diagnostics) {
+  const visibleDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity !== "success");
+  const errorCount = visibleDiagnostics.filter((diagnostic) => diagnostic.severity === "error").length;
+  const warningCount = visibleDiagnostics.filter((diagnostic) => diagnostic.severity === "warning").length;
+
+  elements.diagnosticCountChip.textContent = `${visibleDiagnostics.length} message${visibleDiagnostics.length === 1 ? "" : "s"}`;
+  elements.diagnosticStatusChip.className = `chip ${
+    errorCount > 0 ? "status-error" : warningCount > 0 ? "status-running" : "status-success"
+  }`;
+  elements.diagnosticStatusChip.textContent = errorCount > 0
+    ? `${errorCount} error${errorCount === 1 ? "" : "s"}`
+    : warningCount > 0
+      ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
+      : "No issues";
 }
 
 function renderExplorer() {
-  const filesMode = state.explorerMode === "files";
-  elements.explorerFilesButton.classList.toggle("is-active", filesMode);
-  elements.explorerOutputsButton.classList.toggle("is-active", !filesMode);
-  const entries = currentExplorerEntries();
+  const hasFiles = state.archiveFiles.length > 0;
+  const hasOutputs = state.outputs.length > 0;
+
+  if (state.explorerMode === "files" && !hasFiles && hasOutputs) {
+    state.explorerMode = "outputs";
+  }
+  if (state.explorerMode === "outputs" && !hasOutputs && hasFiles) {
+    state.explorerMode = "files";
+  }
+
+  elements.explorerFilesButton.classList.toggle("is-active", state.explorerMode === "files");
+  elements.explorerOutputsButton.classList.toggle("is-active", state.explorerMode === "outputs");
+  elements.explorerFilesButton.disabled = !hasFiles;
+  elements.explorerOutputsButton.disabled = !hasOutputs;
+
+  const allEntries = currentExplorerEntries();
+  const entries = filterExplorerEntries(allEntries, state.explorerFilter);
   elements.outputFileList.innerHTML = "";
+  elements.explorerCountChip.textContent = allEntries.length === entries.length
+    ? `${entries.length} shown`
+    : `${entries.length} of ${allEntries.length} shown`;
 
   if (entries.length === 0) {
-    elements.activeOutputName.textContent = filesMode ? "No archive file selected" : "No output selected";
+    elements.activeOutputName.textContent = state.explorerFilter
+      ? "No entries match the current filter"
+      : state.explorerMode === "files"
+        ? "No archive file selected"
+        : "No output selected";
     elements.activeOutputKind.textContent = "Text";
-    elements.outputContent.textContent = filesMode
-      ? "Upload and analyze an archive to preview unpacked files."
-      : "Run a successful build to preview generated Bedrock files.";
+    elements.outputContent.textContent = state.explorerFilter
+      ? "Change or clear the filter to see more files."
+      : state.explorerMode === "files"
+        ? "Upload and analyze an archive to preview unpacked files."
+        : "Run a successful build to preview generated Bedrock files.";
+    elements.copyOutputButton.disabled = true;
     return;
   }
 
@@ -459,13 +650,16 @@ function renderExplorer() {
   elements.outputContent.textContent = activeEntry.previewable === false
     ? "Binary file preview is not available."
     : activeEntry.content;
+  elements.copyOutputButton.disabled = activeEntry.previewable === false;
 }
 
 function renderMetrics(durationMs) {
   elements.metricDiagnostics.textContent = String(
     state.diagnostics.filter((item) => item.severity !== "success").length
   );
-  elements.metricOutputs.textContent = String(state.outputs.length);
+  elements.metricOutputs.textContent = String(
+    state.workbenchMode === "upload" ? state.archiveFiles.length : state.outputs.length
+  );
   elements.metricDuration.textContent = `${Math.round(durationMs || 0)}ms`;
 }
 
@@ -481,16 +675,24 @@ function switchWorkbenchMode(mode) {
     elements.watchButton.classList.remove("is-toggled");
     elements.watchButton.textContent = "Watch Off";
     elements.watchState.textContent = "Disabled";
+    if (state.archiveFiles.length > 0) {
+      state.explorerMode = "files";
+    }
+  } else if (state.outputs.length > 0) {
+    state.explorerMode = "outputs";
   }
-  renderMode();
-  renderSummaryPanel();
-  renderDiagnostics();
-  renderExplorer();
+  renderAll(state.lastDurationMs);
 }
 
 function switchExplorerMode(mode) {
+  const entries = mode === "files" ? state.archiveFiles : state.outputs;
+  if (entries.length === 0) {
+    return;
+  }
   state.explorerMode = mode;
-  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  state.activePreviewPath = filterExplorerEntries(entries, state.explorerFilter)[0]?.path
+    ?? entries[0]?.path
+    ?? null;
   renderExplorer();
 }
 
@@ -518,15 +720,37 @@ function scheduleWatchBuild() {
   }, 600);
 }
 
-function selectArchive(file) {
+async function selectArchive(file, options = {}) {
   state.archive = file;
   state.archiveSummary = null;
   state.archiveFiles = [];
   state.outputs = [];
+  state.diagnostics = [];
   state.activePreviewPath = null;
+  state.explorerFilter = "";
+  elements.explorerSearchInput.value = "";
   renderUploadSummary();
   renderUploadDetails();
   renderExplorer();
+
+  if (file && options.autoAnalyze) {
+    await runArchiveAnalysis();
+  }
+}
+
+function clearArchiveSelection() {
+  state.archive = null;
+  state.archiveSummary = null;
+  state.archiveFiles = [];
+  state.outputs = [];
+  state.diagnostics = [];
+  state.activePreviewPath = null;
+  state.explorerFilter = "";
+  state.lastDurationMs = 0;
+  elements.archiveInput.value = "";
+  elements.explorerSearchInput.value = "";
+  renderAll(0);
+  renderRunState("Idle", "status-idle");
 }
 
 function resetSample() {
@@ -579,7 +803,7 @@ async function invokeApiCompile(command, files) {
     return result;
   }
   if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}.`);
+    throw createHttpError(response.status, `Request failed with status ${response.status}.`);
   }
   return result;
 }
@@ -593,7 +817,12 @@ async function invokeApiArchive(file) {
     return result;
   }
   if (!response.ok) {
-    throw new Error(`Archive request failed with status ${response.status}.`);
+    throw createHttpError(
+      response.status,
+      response.status === 413
+        ? "The public upload bridge rejected this archive because the request is too large."
+        : `Archive request failed with status ${response.status}.`
+    );
   }
   return result;
 }
@@ -966,6 +1195,13 @@ function formatBytes(bytes) {
   return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
 }
 
+function filterExplorerEntries(entries, query) {
+  if (!query) {
+    return entries;
+  }
+  return entries.filter((entry) => entry.path.toLowerCase().includes(query));
+}
+
 function onArchiveDragOver(event) {
   event.preventDefault();
   elements.archiveDropzone.classList.add("is-dragover");
@@ -975,10 +1211,10 @@ function onArchiveDragLeave() {
   elements.archiveDropzone.classList.remove("is-dragover");
 }
 
-function onArchiveDrop(event) {
+async function onArchiveDrop(event) {
   event.preventDefault();
   elements.archiveDropzone.classList.remove("is-dragover");
-  selectArchive(event.dataTransfer?.files?.[0] ?? null);
+  await selectArchive(event.dataTransfer?.files?.[0] ?? null, { autoAnalyze: true });
 }
 
 function lineForOffset(text, offset) {
@@ -1068,4 +1304,52 @@ function delay(ms) {
 
 function escapeHtml(value) {
   return `${value}`.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function scrollToSection(id) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function createHttpError(status, message) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+function createUiDiagnostic(severity, code, message) {
+  return {
+    severity,
+    code,
+    message,
+    file: "upload",
+    line: 1,
+    column: 1
+  };
+}
+
+function dirname(filePath) {
+  const normalized = `${filePath}`.replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : ".";
+}
+
+function resolveArchivePath(baseDir, relativePath) {
+  const normalizedBase = `${baseDir}`.replace(/\\/g, "/");
+  const normalizedRelative = `${relativePath}`.replace(/\\/g, "/");
+  const segments = normalizedRelative.startsWith("/")
+    ? []
+    : normalizedBase === "." || normalizedBase.length === 0
+      ? []
+      : normalizedBase.split("/");
+  for (const segment of normalizedRelative.split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  return segments.join("/");
 }
