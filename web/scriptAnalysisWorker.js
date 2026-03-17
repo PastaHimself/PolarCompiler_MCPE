@@ -7,6 +7,10 @@ const BUNDLED_TYPE_MODULES = new Map([
   ["@minecraft/server", "/__bedrock__/node_modules/@minecraft/server/index.d.ts"],
   ["@minecraft/server-ui", "/__bedrock__/node_modules/@minecraft/server-ui/index.d.ts"]
 ]);
+const SUPPORT_MODULE_SHIMS = new Map([
+  ["@minecraft/common", `declare module "@minecraft/common";\n`],
+  ["@minecraft/vanilla-data", `declare module "@minecraft/vanilla-data";\n`]
+]);
 
 let typingsCache = null;
 
@@ -356,6 +360,9 @@ function runBedrockTypeCheck(scriptFiles, importedBedrockModules, allowedDepende
 
   const typings = getBundledTypings();
   virtualFiles.set(ROOT_LIB, typings.lib);
+  for (const [moduleName, sourceText] of SUPPORT_MODULE_SHIMS) {
+    virtualFiles.set(`/__bedrock__/node_modules/${moduleName}/index.d.ts`, sourceText);
+  }
   const typecheckDependencies = new Set([...allowedDependencies, ...importedBedrockModules]);
   for (const moduleName of typecheckDependencies) {
     if (!moduleName.startsWith("@minecraft/")) {
