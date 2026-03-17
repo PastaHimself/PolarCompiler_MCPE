@@ -3,8 +3,10 @@
 importScripts("./vendor/typescript.js");
 
 const ROOT_LIB = "/__bedrock__/lib.esnext.slim.d.ts";
-const SERVER_TYPES = "/__bedrock__/node_modules/@minecraft/server/index.d.ts";
-const SERVER_UI_TYPES = "/__bedrock__/node_modules/@minecraft/server-ui/index.d.ts";
+const BUNDLED_TYPE_MODULES = new Map([
+  ["@minecraft/server", "/__bedrock__/node_modules/@minecraft/server/index.d.ts"],
+  ["@minecraft/server-ui", "/__bedrock__/node_modules/@minecraft/server-ui/index.d.ts"]
+]);
 
 let typingsCache = null;
 
@@ -34,135 +36,338 @@ async function analyzeWorkspace(workspace) {
     return [];
   }
 
-  const files = Array.isArray(workspace.files) ? workspace.files : [];
+  const files = Array.isArray(workspace.files)
+    ? workspace.files.filter((file) => typeof file?.path === "string" && typeof file?.content === "string")
+    : [];
+  const fileMap = new Map(files.map((file) => [normalizeArchivePath(file.path), normalizeWorkspaceFile(file)]));
+  const manifests = collectBehaviorScriptManifests(fileMap);
   const diagnostics = [];
-  const manifests = collectBehaviorManifests(files);
 
   for (const manifest of manifests) {
-    const fileMap = new Map(files.map((file) => [file.path, file]));
-    const scriptModules = manifest.modules.filter((module) => module.type === "script");
-    if (scriptModules.length === 0) {
-      continue;
-    }
-
-    const declaredDependencies = extractDeclaredModuleDependencies(manifest.dependencies);
-
-    for (const [scriptModuleIndex, module] of scriptModules.entries()) {
-      if (typeof module.entry !== "string" || module.entry.length === 0) {
-        diagnostics.push(createDiagnostic("error", "SCR1001", "Script module is missing its 'entry' field.", manifest.path));
-        continue;
-      }
-
-      const entryPath = resolvePackPath(manifest.dir, module.entry);
-      if (!belongsToPack(entryPath, manifest.dir)) {
-        diagnostics.push(createDiagnostic("error", "SCR1002", `Script entry '${module.entry}' escapes the behavior pack root.`, manifest.path));
-        continue;
-      }
-
-      const entryFile = fileMap.get(entryPath);
-      if (!entryFile) {
-        diagnostics.push(createDiagnostic("error", "SCR1003", `Script entry '${module.entry}' was not found.`, manifest.path));
-        continue;
-      }
-
-      if (!isScriptFile(entryFile.ext)) {
-        diagnostics.push(createDiagnostic("error", "SCR1004", `Script entry '${module.entry}' must be a .js, .mjs, or .cjs file.`, manifest.path));
-        continue;
-      }
-
-      const moduleFiles = collectReachableScriptFiles(entryPath, fileMap, manifest.dir);
-      const allowedDependencies = buildModuleDependencySet(declaredDependencies, scriptModuleIndex);
-
-      for (const file of moduleFiles) {
-        diagnostics.push(...analyzeImports(file, fileMap, manifest, allowedDependencies));
-      }
-
-      diagnostics.push(...runTypeCheck(moduleFiles, allowedDependencies));
-    }
+    diagnostics.push(...analyzeManifestScripts(manifest, fileMap));
   }
 
   return dedupeDiagnostics(diagnostics).sort(compareDiagnostics);
 }
 
-function collectBehaviorManifests(files) {
-  const manifests = [];
+function analyzeManifestScripts(manifest, fileMap) {
+  const diagnostics = [];
+  const dependencyNames = extractManifestDependencyNames(manifest.dependencies);
+  const dependencySet = new Set(dependencyNames);
 
-  for (const file of files) {
-    if (!file.path.toLowerCase().endsWith("/manifest.json") && file.path.toLowerCase() !== "manifest.json") {
+  for (const [scriptModuleIndex, scriptModule] of manifest.scriptModules.entries()) {
+    const entryValue = typeof scriptModule.entry === "string" ? scriptModule.entry.trim() : "";
+    if (!entryValue) {
+      diagnostics.push(
+        createDiagnostic("error", "SCR1001", "Script module is missing its 'entry' field.", manifest.path)
+      );
       continue;
     }
 
-    let json;
+    const entryPath = resolveRelativePath(manifest.dir, entryValue);
+    if (!belongsToPack(entryPath, manifest.dir)) {
+      diagnostics.push(
+        createDiagnostic(
+          "error",
+          "SCR1002",
+          `Script entry '${scriptModule.entry}' escapes the behavior pack root.`,
+          manifest.path
+        )
+      );
+      continue;
+    }
+
+    const entryFile = fileMap.get(entryPath);
+    if (!entryFile) {
+      diagnostics.push(
+        createDiagnostic("error", "SCR1003", `Script entry '${scriptModule.entry}' was not found.`, manifest.path)
+      );
+      continue;
+    }
+
+    if (!isScriptFile(entryFile.ext)) {
+      diagnostics.push(
+        createDiagnostic(
+          "error",
+          "SCR1004",
+          `Script entry '${scriptModule.entry}' must be a .js, .mjs, or .cjs file.`,
+          manifest.path
+        )
+      );
+      continue;
+    }
+
+    const graph = collectScriptGraph(entryFile, fileMap, manifest);
+    diagnostics.push(...graph.diagnostics);
+
+    const slotDependency = dependencyNames[scriptModuleIndex] ?? null;
+    const allowedDependencies = buildAllowedDependencySet(dependencySet, slotDependency);
+    const importedBedrockModules = collectImportedBedrockModules(graph.files);
+
+    for (const importedModule of importedBedrockModules) {
+      if (!allowedDependencies.has(importedModule)) {
+        const consumer = findFirstImportConsumer(graph.files, importedModule);
+        diagnostics.push(
+          createDiagnostic(
+            "error",
+            "SCR1101",
+            `Missing manifest dependency for '${importedModule}'.`,
+            consumer?.file ?? manifest.path,
+            consumer?.line ?? 1,
+            consumer?.column ?? 1
+          )
+        );
+      }
+    }
+
+    diagnostics.push(...collectSyntaxDiagnostics(graph.files));
+    diagnostics.push(...runBedrockTypeCheck(graph.files, importedBedrockModules, allowedDependencies));
+  }
+
+  return diagnostics;
+}
+
+function collectBehaviorScriptManifests(fileMap) {
+  const manifests = [];
+
+  for (const file of fileMap.values()) {
+    if (basename(file.path).toLowerCase() !== "manifest.json") {
+      continue;
+    }
+
+    let parsed;
     try {
-      json = JSON.parse(file.content ?? "");
+      parsed = JSON.parse(file.content);
     } catch {
       continue;
     }
 
-    const modules = Array.isArray(json.modules) ? json.modules.filter(isObject) : [];
-    if (!modules.some((module) => module.type === "data" || module.type === "script")) {
+    const modules = Array.isArray(parsed.modules) ? parsed.modules.filter(isObject) : [];
+    const hasBehaviorModule = modules.some((module) => module.type === "data");
+    const scriptModules = modules.filter((module) => module.type === "script");
+    if (!hasBehaviorModule || scriptModules.length === 0) {
       continue;
     }
 
     manifests.push({
       path: file.path,
       dir: dirname(file.path),
-      modules,
-      dependencies: Array.isArray(json.dependencies) ? json.dependencies : []
+      scriptModules,
+      dependencies: Array.isArray(parsed.dependencies) ? parsed.dependencies : []
     });
   }
 
   return manifests;
 }
 
-function analyzeImports(file, fileMap, manifest, dependencies) {
+function collectScriptGraph(entryFile, fileMap, manifest) {
   const diagnostics = [];
-  const imports = extractImports(file.content ?? "");
+  const visited = new Set();
+  const queued = new Set([entryFile.path]);
+  const queue = [entryFile.path];
+  const files = [];
 
-  for (const imported of imports) {
-    if (imported.specifier.startsWith("@minecraft/")) {
-      if (!dependencies.has(imported.specifier)) {
-        diagnostics.push(createDiagnostic("error", "SCR1101", `Missing manifest dependency for '${imported.specifier}'.`, file.path, imported.line, imported.column));
-      }
+  while (queue.length > 0) {
+    const currentPath = queue.shift();
+    queued.delete(currentPath);
+    if (!currentPath || visited.has(currentPath)) {
+      continue;
+    }
+    visited.add(currentPath);
+
+    const currentFile = fileMap.get(currentPath);
+    if (!currentFile || !isScriptFile(currentFile.ext)) {
       continue;
     }
 
-    if (imported.specifier.startsWith(".")) {
-      const resolved = resolveScriptImport(file.path, imported.specifier, fileMap);
-      if (!resolved) {
-        diagnostics.push(createDiagnostic("error", "SCR1102", `Could not resolve relative import '${imported.specifier}'.`, file.path, imported.line, imported.column));
-      } else if (!belongsToPack(resolved, manifest.dir)) {
-        diagnostics.push(createDiagnostic("error", "SCR1103", `Import '${imported.specifier}' resolves outside the behavior pack root.`, file.path, imported.line, imported.column));
+    const sourceFile = parseSourceFile(currentFile);
+    const imports = collectImports(sourceFile);
+    files.push({
+      ...currentFile,
+      sourceFile,
+      imports
+    });
+
+    for (const imported of imports) {
+      if (!imported.specifier.startsWith(".")) {
+        continue;
       }
-      continue;
+
+      const resolvedPath = resolveScriptImport(currentFile.path, imported.specifier, fileMap);
+      if (!resolvedPath) {
+        diagnostics.push(
+          createDiagnostic(
+            "error",
+            "SCR1102",
+            `Could not resolve relative import '${imported.specifier}'.`,
+            currentFile.path,
+            imported.line,
+            imported.column
+          )
+        );
+        continue;
+      }
+
+      if (!belongsToPack(resolvedPath, manifest.dir)) {
+        diagnostics.push(
+          createDiagnostic(
+            "error",
+            "SCR1103",
+            `Import '${imported.specifier}' resolves outside the behavior pack root.`,
+            currentFile.path,
+            imported.line,
+            imported.column
+          )
+        );
+        continue;
+      }
+
+      const resolvedFile = fileMap.get(resolvedPath);
+      if (!resolvedFile || !isScriptFile(resolvedFile.ext)) {
+        diagnostics.push(
+          createDiagnostic(
+            "error",
+            "SCR1105",
+            `Import '${imported.specifier}' does not resolve to a Bedrock script file.`,
+            currentFile.path,
+            imported.line,
+            imported.column
+          )
+        );
+        continue;
+      }
+
+      if (!queued.has(resolvedPath) && !visited.has(resolvedPath)) {
+        queue.push(resolvedPath);
+        queued.add(resolvedPath);
+      }
+    }
+  }
+
+  return { files, diagnostics };
+}
+
+function collectImports(sourceFile) {
+  const imports = [];
+
+  visit(sourceFile);
+  return imports;
+
+  function visit(node) {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.push(createImportRecord(sourceFile, node.moduleSpecifier.text, node.moduleSpecifier));
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      imports.push(createImportRecord(sourceFile, node.moduleSpecifier.text, node.moduleSpecifier));
+    } else if (ts.isCallExpression(node)) {
+      if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+        const firstArgument = node.arguments[0];
+        if (firstArgument && ts.isStringLiteral(firstArgument)) {
+          imports.push(createImportRecord(sourceFile, firstArgument.text, firstArgument));
+        }
+      } else if (
+        ts.isIdentifier(node.expression)
+        && node.expression.text === "require"
+        && node.arguments.length > 0
+        && ts.isStringLiteral(node.arguments[0])
+      ) {
+        imports.push(createImportRecord(sourceFile, node.arguments[0].text, node.arguments[0]));
+      }
     }
 
-    diagnostics.push(createDiagnostic("warning", "SCR1104", `Bare import '${imported.specifier}' is not recognized as a Bedrock script module.`, file.path, imported.line, imported.column));
+    ts.forEachChild(node, visit);
+  }
+}
+
+function createImportRecord(sourceFile, specifier, node) {
+  const position = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+  return {
+    specifier,
+    line: position.line + 1,
+    column: position.character + 1
+  };
+}
+
+function collectImportedBedrockModules(scriptFiles) {
+  const modules = new Set();
+
+  for (const file of scriptFiles) {
+    for (const imported of file.imports) {
+      if (imported.specifier.startsWith("@minecraft/")) {
+        modules.add(imported.specifier);
+      }
+    }
+  }
+
+  return modules;
+}
+
+function findFirstImportConsumer(scriptFiles, specifier) {
+  for (const file of scriptFiles) {
+    const imported = file.imports.find((entry) => entry.specifier === specifier);
+    if (imported) {
+      return {
+        file: file.path,
+        line: imported.line,
+        column: imported.column
+      };
+    }
+  }
+
+  return null;
+}
+
+function collectSyntaxDiagnostics(scriptFiles) {
+  const diagnostics = [];
+
+  for (const file of scriptFiles) {
+    for (const diagnostic of file.sourceFile.parseDiagnostics ?? []) {
+      diagnostics.push(convertTypeScriptDiagnostic(diagnostic, file.sourceFile, file.path, "SCR1200"));
+    }
+
+    for (const imported of file.imports) {
+      if (!imported.specifier.startsWith(".") && !imported.specifier.startsWith("@minecraft/")) {
+        diagnostics.push(
+          createDiagnostic(
+            "warning",
+            "SCR1104",
+            `Bare import '${imported.specifier}' is not recognized as a Bedrock script module.`,
+            file.path,
+            imported.line,
+            imported.column
+          )
+        );
+      }
+    }
   }
 
   return diagnostics;
 }
 
-function runTypeCheck(scriptFiles, declaredDependencies = new Set()) {
-  if (scriptFiles.length === 0) {
+function runBedrockTypeCheck(scriptFiles, importedBedrockModules, allowedDependencies) {
+  const typedModules = [...importedBedrockModules].filter((moduleName) => BUNDLED_TYPE_MODULES.has(moduleName));
+  if (scriptFiles.length === 0 || typedModules.length === 0) {
     return [];
   }
 
   const virtualFiles = new Map();
   for (const file of scriptFiles) {
-    virtualFiles.set(normalizeVirtualPath(file.path), file.content ?? "");
+    virtualFiles.set(normalizeVirtualPath(file.path), file.content);
   }
 
   const typings = getBundledTypings();
   virtualFiles.set(ROOT_LIB, typings.lib);
-  if (declaredDependencies.has("@minecraft/server")) {
-    virtualFiles.set(SERVER_TYPES, typings.server);
-  }
-  if (declaredDependencies.has("@minecraft/server-ui")) {
-    virtualFiles.set(SERVER_UI_TYPES, typings.serverUi);
-  }
-  for (const [fileName, sourceText] of createDependencyShims(declaredDependencies)) {
-    virtualFiles.set(fileName, sourceText);
+  const typecheckDependencies = new Set([...allowedDependencies, ...importedBedrockModules]);
+  for (const moduleName of typecheckDependencies) {
+    if (!moduleName.startsWith("@minecraft/")) {
+      continue;
+    }
+
+    const bundledPath = BUNDLED_TYPE_MODULES.get(moduleName);
+    if (bundledPath) {
+      virtualFiles.set(bundledPath, typings[moduleName]);
+    } else {
+      virtualFiles.set(`/__bedrock__/node_modules/${moduleName}/index.d.ts`, `declare module "${moduleName}";\n`);
+    }
   }
 
   const compilerOptions = {
@@ -173,84 +378,148 @@ function runTypeCheck(scriptFiles, declaredDependencies = new Set()) {
     noEmit: true,
     noLib: true,
     skipLibCheck: true,
+    allowSyntheticDefaultImports: true,
+    esModuleInterop: true,
     target: ts.ScriptTarget.ES2020
   };
 
+  const rootNames = [
+    ROOT_LIB,
+    ...[...virtualFiles.keys()].filter((fileName) => fileName.endsWith(".d.ts") && fileName !== ROOT_LIB),
+    ...scriptFiles.map((file) => normalizeVirtualPath(file.path))
+  ];
+  const scriptRootSet = new Set(scriptFiles.map((file) => normalizeVirtualPath(file.path)));
+  const directorySet = buildDirectorySet(virtualFiles.keys());
+
   const host = {
-    fileExists: (fileName) => virtualFiles.has(normalizeVirtualPath(fileName)),
-    readFile: (fileName) => virtualFiles.get(normalizeVirtualPath(fileName)),
+    fileExists(fileName) {
+      return virtualFiles.has(normalizeVirtualPath(fileName));
+    },
+    readFile(fileName) {
+      return virtualFiles.get(normalizeVirtualPath(fileName));
+    },
     getSourceFile(fileName, languageVersion) {
       const normalized = normalizeVirtualPath(fileName);
       const sourceText = virtualFiles.get(normalized);
       if (sourceText === undefined) {
         return undefined;
       }
-      return ts.createSourceFile(normalized, sourceText, languageVersion, true);
+      return ts.createSourceFile(normalized, sourceText, languageVersion, true, inferScriptKind(normalized));
     },
-    getDefaultLibFileName: () => ROOT_LIB,
-    writeFile: () => {},
-    getCurrentDirectory: () => "/",
-    getDirectories: () => [],
-    getCanonicalFileName: (fileName) => normalizeVirtualPath(fileName),
-    useCaseSensitiveFileNames: () => true,
-    getNewLine: () => "\n",
-    directoryExists: () => true,
-    realpath: (fileName) => normalizeVirtualPath(fileName)
+    getDefaultLibFileName() {
+      return ROOT_LIB;
+    },
+    writeFile() {},
+    getCurrentDirectory() {
+      return "/";
+    },
+    getDirectories(directoryName) {
+      const normalizedDirectory = normalizeDirectoryPath(directoryName);
+      const prefix = normalizedDirectory === "/" ? "/" : `${normalizedDirectory}/`;
+      return [...directorySet]
+        .filter((entry) => entry.startsWith(prefix))
+        .map((entry) => entry.slice(prefix.length).split("/")[0])
+        .filter(uniqueValue)
+        .map((entry) => `${prefix}${entry}`);
+    },
+    getCanonicalFileName(fileName) {
+      return normalizeVirtualPath(fileName);
+    },
+    useCaseSensitiveFileNames() {
+      return true;
+    },
+    getNewLine() {
+      return "\n";
+    },
+    directoryExists(directoryName) {
+      return directorySet.has(normalizeDirectoryPath(directoryName));
+    },
+    realpath(fileName) {
+      return normalizeVirtualPath(fileName);
+    }
   };
 
-  const rootNames = [
-    ROOT_LIB,
-    ...[SERVER_TYPES, SERVER_UI_TYPES].filter((fileName) => virtualFiles.has(fileName)),
-    ...[...virtualFiles.keys()].filter((fileName) => fileName.endsWith("/index.d.ts") && fileName.startsWith("/__bedrock__/node_modules/")),
-    ...scriptFiles.map((file) => normalizeVirtualPath(file.path))
-  ];
-  const scriptRootSet = new Set(scriptFiles.map((file) => normalizeVirtualPath(file.path)));
   const program = ts.createProgram(rootNames, compilerOptions, host);
 
   return ts.getPreEmitDiagnostics(program)
     .filter((diagnostic) => diagnostic.file && scriptRootSet.has(normalizeVirtualPath(diagnostic.file.fileName)))
-    .filter((diagnostic) => !shouldIgnoreTypeDiagnostic(diagnostic, declaredDependencies))
-    .map((diagnostic) => convertTypeDiagnostic(diagnostic));
+    .filter((diagnostic) => !shouldIgnoreTypeDiagnostic(diagnostic))
+    .map((diagnostic) =>
+      convertTypeScriptDiagnostic(
+        diagnostic,
+        diagnostic.file,
+        denormalizeVirtualPath(diagnostic.file.fileName),
+        "SCR2"
+      )
+    );
 }
 
-function convertTypeDiagnostic(diagnostic) {
-  const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
+function shouldIgnoreTypeDiagnostic(diagnostic) {
+  if (!diagnostic) {
+    return false;
+  }
+
+  return diagnostic.code === 2306;
+}
+
+function convertTypeScriptDiagnostic(diagnostic, sourceFile, archivePath, codePrefix) {
+  const position = sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
   return {
     severity: "error",
-    code: `SCR2${diagnostic.code}`,
+    code: `${codePrefix}${diagnostic.code}`,
     message: ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
-    file: denormalizeVirtualPath(diagnostic.file.fileName),
+    file: archivePath,
     line: position.line + 1,
     column: position.character + 1
   };
 }
 
-function extractImports(source) {
-  const results = [];
-  const patterns = [
-    /\bimport\s+(?:[^"'`]*?\s+from\s+)?["']([^"']+)["']/g,
-    /\bimport\(\s*["']([^"']+)["']\s*\)/g,
-    /\brequire\(\s*["']([^"']+)["']\s*\)/g
-  ];
+function normalizeWorkspaceFile(file) {
+  const path = normalizeArchivePath(file.path);
+  return {
+    path,
+    ext: extname(path),
+    content: file.content ?? ""
+  };
+}
 
-  for (const pattern of patterns) {
-    let match;
-    while ((match = pattern.exec(source))) {
-      const location = getLineAndColumn(source, match.index);
-      results.push({
-        specifier: match[1],
-        line: location.line,
-        column: location.column
-      });
-    }
+function extractManifestDependencyNames(dependencies) {
+  return (Array.isArray(dependencies) ? dependencies : [])
+    .filter((dependency) => isObject(dependency) && typeof dependency.module_name === "string")
+    .map((dependency) => dependency.module_name.trim())
+    .filter(Boolean);
+}
+
+function buildAllowedDependencySet(dependencySet, slotDependency) {
+  const allowed = new Set(dependencySet);
+  if (slotDependency) {
+    allowed.add(slotDependency);
   }
+  return allowed;
+}
 
-  return results;
+function parseSourceFile(file) {
+  return ts.createSourceFile(
+    normalizeVirtualPath(file.path),
+    file.content,
+    ts.ScriptTarget.Latest,
+    true,
+    inferScriptKind(file.path)
+  );
+}
+
+function inferScriptKind(filePath) {
+  if (filePath.endsWith(".cjs")) {
+    return ts.ScriptKind.JS;
+  }
+  if (filePath.endsWith(".mjs")) {
+    return ts.ScriptKind.JS;
+  }
+  return ts.ScriptKind.JS;
 }
 
 function resolveScriptImport(fromPath, specifier, fileMap) {
-  const baseDirectory = dirname(fromPath);
-  const rawTarget = resolveRelativePath(baseDirectory, specifier);
+  const rawTarget = resolveRelativePath(dirname(fromPath), specifier);
   const candidates = [
     rawTarget,
     `${rawTarget}.js`,
@@ -261,15 +530,12 @@ function resolveScriptImport(fromPath, specifier, fileMap) {
     `${rawTarget}/index.cjs`
   ];
 
-  return candidates.find((candidate) => fileMap.has(candidate)) ?? null;
-}
-
-function resolvePackPath(packDir, relativePath) {
-  return resolveRelativePath(packDir || ".", relativePath);
+  return candidates.find((candidate) => fileMap.has(normalizeArchivePath(candidate))) ?? null;
 }
 
 function resolveRelativePath(basePath, relativePath) {
-  const segments = basePath && basePath !== "." ? basePath.split("/") : [];
+  const segments = basePath && basePath !== "." ? normalizeArchivePath(basePath).split("/") : [];
+
   for (const segment of `${relativePath}`.replace(/\\/g, "/").split("/")) {
     if (!segment || segment === ".") {
       continue;
@@ -280,41 +546,82 @@ function resolveRelativePath(basePath, relativePath) {
     }
     segments.push(segment);
   }
-  return segments.join("/");
+
+  return normalizeArchivePath(segments.join("/"));
+}
+
+function buildDirectorySet(fileNames) {
+  const directories = new Set(["/"]);
+
+  for (const fileName of fileNames) {
+    let current = parentVirtualDirectory(fileName);
+    while (current) {
+      if (directories.has(current)) {
+        break;
+      }
+      directories.add(current);
+      current = parentVirtualDirectory(current);
+    }
+  }
+
+  return directories;
+}
+
+function parentVirtualDirectory(filePath) {
+  const normalized = normalizeDirectoryPath(filePath);
+  if (normalized === "/") {
+    return "";
+  }
+
+  const slashIndex = normalized.lastIndexOf("/");
+  return slashIndex <= 0 ? "/" : normalized.slice(0, slashIndex);
 }
 
 function belongsToPack(filePath, packDir) {
-  return !packDir || filePath === packDir || filePath.startsWith(`${packDir}/`);
+  if (!packDir || packDir === ".") {
+    return true;
+  }
+  return filePath === packDir || filePath.startsWith(`${packDir}/`);
 }
 
 function isScriptFile(extension) {
   return extension === ".js" || extension === ".mjs" || extension === ".cjs";
 }
 
+function extname(filePath) {
+  const normalized = normalizeArchivePath(filePath);
+  const dotIndex = normalized.lastIndexOf(".");
+  const slashIndex = normalized.lastIndexOf("/");
+  return dotIndex > slashIndex ? normalized.slice(dotIndex).toLowerCase() : "";
+}
+
+function basename(filePath) {
+  const normalized = normalizeArchivePath(filePath);
+  const slashIndex = normalized.lastIndexOf("/");
+  return slashIndex >= 0 ? normalized.slice(slashIndex + 1) : normalized;
+}
+
 function dirname(filePath) {
-  const normalized = `${filePath}`.replace(/\\/g, "/");
-  const index = normalized.lastIndexOf("/");
-  return index >= 0 ? normalized.slice(0, index) : ".";
+  const normalized = normalizeArchivePath(filePath);
+  const slashIndex = normalized.lastIndexOf("/");
+  return slashIndex >= 0 ? normalized.slice(0, slashIndex) : ".";
+}
+
+function normalizeArchivePath(filePath) {
+  return `${filePath}`.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+/g, "/");
 }
 
 function normalizeVirtualPath(filePath) {
-  return `/${`${filePath}`.replace(/\\/g, "/").replace(/^\/+/, "")}`;
+  return `/${normalizeArchivePath(filePath)}`;
 }
 
 function denormalizeVirtualPath(filePath) {
-  return `${filePath}`.replace(/^\/+/, "");
+  return normalizeArchivePath(`${filePath}`.replace(/^\/+/, ""));
 }
 
-function getLineAndColumn(text, offset) {
-  const lines = text.slice(0, offset).split("\n");
-  return {
-    line: lines.length,
-    column: lines.at(-1).length + 1
-  };
-}
-
-function createDiagnostic(severity, code, message, file, line = 1, column = 1) {
-  return { severity, code, message, file, line, column };
+function normalizeDirectoryPath(directoryName) {
+  const normalized = normalizeVirtualPath(directoryName).replace(/\/+$/, "");
+  return normalized || "/";
 }
 
 function compareDiagnostics(left, right) {
@@ -327,14 +634,41 @@ function compareDiagnostics(left, right) {
   );
 }
 
+function dedupeDiagnostics(diagnostics) {
+  const seen = new Set();
+
+  return diagnostics.filter((diagnostic) => {
+    const key = [
+      diagnostic.severity,
+      diagnostic.code,
+      diagnostic.file,
+      diagnostic.line,
+      diagnostic.column,
+      diagnostic.message
+    ].join("|");
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function createDiagnostic(severity, code, message, file, line = 1, column = 1) {
+  return { severity, code, message, file, line, column };
+}
+
 function getBundledTypings() {
   if (!typingsCache) {
     typingsCache = {
       lib: readBundledTyping("lib.esnext.slim.d.ts"),
-      server: readBundledTyping("minecraft-server.d.ts"),
-      serverUi: readBundledTyping("minecraft-server-ui.d.ts")
+      "@minecraft/server": readBundledTyping("minecraft-server.d.ts"),
+      "@minecraft/server-ui": readBundledTyping("minecraft-server-ui.d.ts")
     };
   }
+
   return typingsCache;
 }
 
@@ -348,118 +682,10 @@ function readBundledTyping(fileName) {
   return request.responseText;
 }
 
+function uniqueValue(value, index, values) {
+  return values.indexOf(value) === index;
+}
+
 function isObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function extractDeclaredModuleDependencies(dependencies) {
-  return (Array.isArray(dependencies) ? dependencies : [])
-    .filter((dependency) => isObject(dependency) && typeof dependency.module_name === "string")
-    .map((dependency) => dependency.module_name);
-}
-
-function buildModuleDependencySet(declaredDependencies, moduleIndex) {
-  const allowed = new Set(declaredDependencies);
-  const slottedDependency = declaredDependencies[moduleIndex];
-  if (typeof slottedDependency === "string") {
-    allowed.add(slottedDependency);
-  }
-  return allowed;
-}
-
-function collectReachableScriptFiles(entryPath, fileMap, packDir) {
-  const visited = new Set();
-  const queue = [entryPath];
-  const results = [];
-
-  while (queue.length > 0) {
-    const currentPath = queue.shift();
-    if (!currentPath || visited.has(currentPath)) {
-      continue;
-    }
-    visited.add(currentPath);
-
-    const currentFile = fileMap.get(currentPath);
-    if (!currentFile || !isScriptFile(currentFile.ext) || !belongsToPack(currentPath, packDir)) {
-      continue;
-    }
-
-    results.push(currentFile);
-    for (const imported of extractImports(currentFile.content ?? "")) {
-      if (!imported.specifier.startsWith(".")) {
-        continue;
-      }
-      const resolved = resolveScriptImport(currentFile.path, imported.specifier, fileMap);
-      if (resolved && !visited.has(resolved)) {
-        queue.push(resolved);
-      }
-    }
-  }
-
-  return results;
-}
-
-function createDependencyShims(declaredDependencies) {
-  const shims = [];
-
-  for (const moduleName of declaredDependencies) {
-    if (!moduleName.startsWith("@minecraft/")) {
-      continue;
-    }
-    if (moduleName === "@minecraft/server" || moduleName === "@minecraft/server-ui") {
-      continue;
-    }
-
-    shims.push([
-      `/__bedrock__/node_modules/${moduleName}/index.d.ts`,
-      [
-        `declare module "${moduleName}" {`,
-        "  const defaultExport: any;",
-        "  export default defaultExport;",
-        "}"
-      ].join("\n")
-    ]);
-  }
-
-  return shims;
-}
-
-function dedupeDiagnostics(diagnostics) {
-  const seen = new Set();
-  return diagnostics.filter((diagnostic) => {
-    const key = [
-      diagnostic.severity,
-      diagnostic.code,
-      diagnostic.file,
-      diagnostic.line,
-      diagnostic.column,
-      diagnostic.message
-    ].join("|");
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function shouldIgnoreTypeDiagnostic(diagnostic, declaredDependencies) {
-  if (!diagnostic) {
-    return false;
-  }
-
-  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
-  const referencedModule = [...declaredDependencies].find(
-    (moduleName) => moduleName.startsWith("@minecraft/") && message.includes(`'${moduleName}'`)
-  );
-
-  if (!referencedModule) {
-    return false;
-  }
-
-  if (referencedModule === "@minecraft/server" || referencedModule === "@minecraft/server-ui") {
-    return false;
-  }
-
-  return diagnostic.code === 2305 || diagnostic.code === 2307 || diagnostic.code === 2614 || diagnostic.code === 2792;
 }
