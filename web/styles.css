@@ -616,6 +616,37 @@ button {
   display: block;
 }
 
+.code-editor-shell {
+  position: relative;
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.code-highlight-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.code-highlight-line {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  border-left: 3px solid transparent;
+  border-radius: 10px;
+}
+
+.code-highlight-line.is-error {
+  border-left-color: var(--error);
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.18), rgba(239, 68, 68, 0.04));
+}
+
+.code-highlight-line.is-warning {
+  border-left-color: var(--warm);
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.18), rgba(245, 158, 11, 0.04));
+}
+
 textarea,
 pre {
   width: 100%;
@@ -633,6 +664,8 @@ textarea {
   color: var(--ink);
   resize: vertical;
   outline: none;
+  position: relative;
+  z-index: 1;
 }
 
 .diagnostics-panel {
@@ -754,15 +787,26 @@ textarea {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.output-editor-shell {
+  margin-top: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.output-editor-shell[hidden] {
+  display: none;
+}
+
 #output-editor {
   width: 100%;
   min-height: 350px;
   max-height: 540px;
-  margin-top: 16px;
+  margin-top: 0;
   padding: 18px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.2); /* deeper text area inset */
+  border-radius: 0;
+  border: 0;
+  background: transparent;
   color: #e2e8f0;
   resize: vertical;
   outline: none;

@@ -73,6 +73,7 @@ const elements = {
   uploadSummaryList: document.querySelector("#upload-summary-list"),
   editorTabs: document.querySelector("#editor-tabs"),
   textarea: document.querySelector("#editor-textarea"),
+  editorHighlightLayer: document.querySelector("#editor-highlight-layer"),
   metricDiagnostics: document.querySelector("#metric-diagnostics"),
   metricOutputs: document.querySelector("#metric-outputs"),
   metricDuration: document.querySelector("#metric-duration"),
@@ -87,7 +88,9 @@ const elements = {
   activeOutputKind: document.querySelector("#active-output-kind"),
   viewerNote: document.querySelector("#viewer-note"),
   outputContent: document.querySelector("#output-content"),
+  outputEditorShell: document.querySelector("#output-editor-shell"),
   outputEditor: document.querySelector("#output-editor"),
+  outputHighlightLayer: document.querySelector("#output-highlight-layer"),
   validateButton: document.querySelector("#validate-button"),
   buildButton: document.querySelector("#build-button"),
   watchButton: document.querySelector("#watch-button"),
@@ -169,10 +172,12 @@ function attachEvents() {
     state.files[state.activeEditorFile] = event.target.value;
     persistCurrentEditor();
     renderSummaryPanel();
+    renderEditorHighlights();
     if (state.watchEnabled && state.workbenchMode === "editor") {
       scheduleWatchBuild();
     }
   });
+  elements.textarea.addEventListener("scroll", syncEditorHighlightScroll);
 
   elements.validateButton.addEventListener("click", () => void runEditorCommand("validate"));
   elements.buildButton.addEventListener("click", () => void runEditorCommand("build"));
@@ -205,10 +210,12 @@ function attachEvents() {
     elements.viewerNote.textContent = activeEntry ? describeActiveEntry(activeEntry) : elements.viewerNote.textContent;
     elements.revertFileButton.disabled = !Boolean(activeEntry?.dirty);
     elements.downloadArchiveButton.disabled = hasUnanalyzedChanges(state.uploadWorkspace);
+    renderOutputHighlights();
     if (state.uploadWatchEnabled && state.workbenchMode === "upload") {
       scheduleUploadWatchAnalysis();
     }
   });
+  elements.outputEditor.addEventListener("scroll", syncOutputHighlightScroll);
   elements.chooseArchiveButton.addEventListener("click", () => elements.archiveInput.click());
   elements.clearArchiveButton.addEventListener("click", clearArchiveSelection);
   elements.archiveInput.addEventListener("change", (event) => {
@@ -631,6 +638,7 @@ function renderEditorTabs() {
 
 function renderEditor() {
   elements.textarea.value = state.files[state.activeEditorFile];
+  renderEditorHighlights();
 }
 
 function renderDiagnostics() {
@@ -653,7 +661,8 @@ function renderDiagnostics() {
   for (const diagnostic of diagnostics) {
     const item = document.createElement("article");
     const targetEntry = diagnostic.file ? getWorkspaceEntry(state.uploadWorkspace, diagnostic.file) : null;
-    item.className = `diagnostic-item is-${diagnostic.severity}${targetEntry ? " is-clickable" : ""}`;
+    const isEditorTarget = state.workbenchMode === "editor" && editorFiles.some((file) => file.path === diagnostic.file);
+    item.className = `diagnostic-item is-${diagnostic.severity}${targetEntry || isEditorTarget ? " is-clickable" : ""}`;
     item.innerHTML = `
       <strong>${diagnostic.severity.toUpperCase()} ${escapeHtml(diagnostic.code)}</strong>
       <p>${escapeHtml(diagnostic.message)}</p>
@@ -661,11 +670,15 @@ function renderDiagnostics() {
     `;
     if (targetEntry) {
       item.addEventListener("click", () => openWorkspaceDiagnostic(targetEntry.path));
+    } else if (isEditorTarget) {
+      item.addEventListener("click", () => openEditorDiagnostic(diagnostic.file));
     }
     elements.diagnosticList.append(item);
   }
 
   renderDiagnosticSummary(diagnostics);
+  renderEditorHighlights();
+  renderOutputHighlights();
 }
 
 function renderDiagnosticSummary(diagnostics) {
@@ -722,7 +735,9 @@ function renderExplorer() {
         ? "Upload and analyze an archive to preview unpacked files."
         : "Run a successful build to preview generated Bedrock files.";
     elements.outputEditor.hidden = true;
+    elements.outputEditorShell.hidden = true;
     elements.outputContent.hidden = false;
+    renderOutputHighlights();
     elements.previewFileButton.disabled = true;
     elements.editFileButton.disabled = true;
     elements.revertFileButton.disabled = true;
@@ -764,15 +779,17 @@ function renderExplorer() {
   elements.downloadArchiveButton.disabled = !uploadMode || !state.uploadWorkspace || hasUnanalyzedChanges(state.uploadWorkspace);
 
   if (state.uploadViewerMode === "edit" && canEdit) {
-    elements.outputEditor.hidden = false;
+    elements.outputEditorShell.hidden = false;
     elements.outputContent.hidden = true;
     elements.outputEditor.value = activeEntry.content;
+    renderOutputHighlights();
   } else {
-    elements.outputEditor.hidden = true;
+    elements.outputEditorShell.hidden = true;
     elements.outputContent.hidden = false;
     elements.outputContent.textContent = activeEntry.previewable === false
       ? "Binary file preview is not available."
       : activeEntry.content;
+    renderOutputHighlights();
   }
   elements.copyOutputButton.disabled = activeEntry.previewable === false;
 }
@@ -840,6 +857,19 @@ function openWorkspaceDiagnostic(targetPath) {
   state.uploadViewerMode = entry?.editable ? "edit" : "preview";
   renderExplorer();
   scrollToSection("explorer-section");
+}
+
+function openEditorDiagnostic(targetPath) {
+  if (!editorFiles.some((file) => file.path === targetPath)) {
+    return;
+  }
+  state.workbenchMode = "editor";
+  state.activeEditorFile = targetPath;
+  renderEditorFileButtons();
+  renderEditorTabs();
+  renderEditor();
+  renderAll(state.lastDurationMs);
+  scrollToSection("workbench-section");
 }
 
 function revertActiveWorkspaceFile() {
@@ -988,6 +1018,108 @@ function renderWatchState() {
   }
 
   elements.watchState.textContent = "Disabled";
+}
+
+function renderEditorHighlights() {
+  renderDiagnosticHighlights(
+    elements.editorHighlightLayer,
+    elements.textarea,
+    collectLineDiagnostics(state.activeEditorFile)
+  );
+}
+
+function renderOutputHighlights() {
+  const diagnostics = state.workbenchMode === "upload" && state.explorerMode === "files" && state.activePreviewPath
+    ? collectLineDiagnostics(state.activePreviewPath)
+    : [];
+  renderDiagnosticHighlights(elements.outputHighlightLayer, elements.outputEditor, diagnostics);
+}
+
+function collectLineDiagnostics(filePath) {
+  if (!filePath) {
+    return [];
+  }
+
+  const highestSeverityByLine = new Map();
+  for (const diagnostic of state.diagnostics) {
+    if (
+      diagnostic.file !== filePath
+      || diagnostic.severity === "success"
+      || !Number.isFinite(diagnostic.line)
+      || diagnostic.line < 1
+    ) {
+      continue;
+    }
+    const current = highestSeverityByLine.get(diagnostic.line);
+    if (!current || compareDiagnosticSeverity(diagnostic.severity, current.severity) > 0) {
+      highestSeverityByLine.set(diagnostic.line, diagnostic);
+    }
+  }
+
+  return [...highestSeverityByLine.values()].sort((left, right) => left.line - right.line);
+}
+
+function compareDiagnosticSeverity(left, right) {
+  return diagnosticSeverityWeight(left) - diagnosticSeverityWeight(right);
+}
+
+function diagnosticSeverityWeight(severity) {
+  switch (severity) {
+    case "error":
+      return 3;
+    case "warning":
+      return 2;
+    case "success":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function renderDiagnosticHighlights(layer, textarea, diagnostics) {
+  if (!layer || !textarea) {
+    return;
+  }
+
+  layer.innerHTML = "";
+  if (!diagnostics.length) {
+    layer.style.transform = "translateY(0)";
+    return;
+  }
+
+  const style = window.getComputedStyle(textarea);
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.7 || 24;
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const paddingRight = parseFloat(style.paddingRight) || 0;
+
+  for (const diagnostic of diagnostics) {
+    const line = document.createElement("div");
+    line.className = `code-highlight-line ${diagnostic.severity === "warning" ? "is-warning" : "is-error"}`;
+    line.title = `${diagnostic.code}: ${diagnostic.message}`;
+    line.style.top = `${paddingTop + ((diagnostic.line - 1) * lineHeight)}px`;
+    line.style.height = `${lineHeight}px`;
+    line.style.left = `${paddingLeft}px`;
+    line.style.right = `${paddingRight}px`;
+    layer.append(line);
+  }
+
+  syncHighlightLayerScroll(layer, textarea);
+}
+
+function syncEditorHighlightScroll() {
+  syncHighlightLayerScroll(elements.editorHighlightLayer, elements.textarea);
+}
+
+function syncOutputHighlightScroll() {
+  syncHighlightLayerScroll(elements.outputHighlightLayer, elements.outputEditor);
+}
+
+function syncHighlightLayerScroll(layer, textarea) {
+  if (!layer || !textarea) {
+    return;
+  }
+  layer.style.transform = `translateY(${-textarea.scrollTop}px)`;
 }
 
 function resetSample() {

@@ -151,7 +151,10 @@
                 </div>
                 <label class="editor-frame">
                   <span class="screenreader-only">Compiler source editor</span>
-                  <textarea id="editor-textarea" spellcheck="false"></textarea>
+                  <div class="code-editor-shell">
+                    <div class="code-highlight-layer" id="editor-highlight-layer" aria-hidden="true"></div>
+                    <textarea id="editor-textarea" spellcheck="false"></textarea>
+                  </div>
                 </label>
               </div>
             </div>
@@ -291,7 +294,10 @@
                   <span class="chip chip-muted" id="active-output-kind">Text</span>
                 </div>
               </div>
-              <textarea id="output-editor" hidden spellcheck="false"></textarea>
+              <div class="code-editor-shell output-editor-shell" id="output-editor-shell" hidden>
+                <div class="code-highlight-layer" id="output-highlight-layer" aria-hidden="true"></div>
+                <textarea id="output-editor" spellcheck="false"></textarea>
+              </div>
               <pre id="output-content"></pre>
             </div>
           </div>
