@@ -1,0 +1,39 @@
+{
+  "dependencies": [
+    {
+      "uuid": "203af6c3-a52b-5717-b266-5ff87081b239",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ],
+  "format_version": 2,
+  "header": {
+    "description": "Resource pack",
+    "min_engine_version": [
+      1,
+      21,
+      100
+    ],
+    "name": "Hello RP",
+    "uuid": "1cb0314e-f0e8-55f3-a363-62fc25834ecb",
+    "version": [
+      1,
+      0,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "resources",
+      "uuid": "10282b37-0da9-5c48-9ce5-13963e382ff0",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}

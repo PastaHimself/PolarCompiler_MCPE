@@ -1,0 +1,23 @@
+addon hello {
+  namespace: "demo";
+  version: [1, 0, 0];
+}
+
+item ruby {
+  id: "demo:ruby";
+  icon: "ruby";
+  texture: "textures/items/ruby";
+  display_name: "item.demo.ruby.name";
+  components: {
+    "minecraft:max_stack_size": 64
+  };
+}
+
+function give_ruby {
+  path: "give_ruby";
+  body: ["give @s demo:ruby 1"];
+}
+
+locale en_US {
+  "item.demo.ruby.name": "Ruby";
+}

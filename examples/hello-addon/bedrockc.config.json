@@ -1,0 +1,25 @@
+{
+  "entry": "./src/main.bca",
+  "srcDir": "./src",
+  "outDir": "./dist",
+  "project": {
+    "slug": "hello-addon",
+    "namespace": "demo",
+    "version": [1, 0, 0],
+    "target": "1.21.100"
+  },
+  "packs": {
+    "behavior": {
+      "name": "Hello BP",
+      "description": "Behavior pack"
+    },
+    "resource": {
+      "name": "Hello RP",
+      "description": "Resource pack"
+    }
+  },
+  "scripts": {
+    "enabled": false,
+    "modules": []
+  }
+}

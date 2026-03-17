@@ -1,0 +1,19 @@
+{
+  "name": "bedrockc",
+  "version": "0.1.0",
+  "description": "A production-oriented compiler and CLI for Minecraft Bedrock add-on projects.",
+  "type": "module",
+  "bin": {
+    "bedrockc": "./src/cli/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node ./src/cli/index.js build",
+    "compile": "node ./src/cli/index.js compile",
+    "validate": "node ./src/cli/index.js validate",
+    "watch": "node ./src/cli/index.js watch",
+    "test": "node --test ./test/*.test.js"
+  }
+}

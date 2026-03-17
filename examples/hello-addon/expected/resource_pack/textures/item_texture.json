@@ -1,0 +1,9 @@
+{
+  "resource_pack_name": "hello-addon",
+  "texture_data": {
+    "ruby": {
+      "textures": "textures/items/ruby"
+    }
+  },
+  "texture_name": "atlas.items"
+}

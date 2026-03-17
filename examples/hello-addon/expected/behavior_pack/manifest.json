@@ -1,0 +1,29 @@
+{
+  "format_version": 2,
+  "header": {
+    "description": "Behavior pack",
+    "min_engine_version": [
+      1,
+      21,
+      100
+    ],
+    "name": "Hello BP",
+    "uuid": "203af6c3-a52b-5717-b266-5ff87081b239",
+    "version": [
+      1,
+      0,
+      0
+    ]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "912584ac-72bd-5ff9-ac55-535f99d08a39",
+      "version": [
+        1,
+        0,
+        0
+      ]
+    }
+  ]
+}

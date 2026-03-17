@@ -1,0 +1,63 @@
+export const TokenKind = Object.freeze({
+  EndOfFile: "EndOfFile",
+  Identifier: "Identifier",
+  String: "String",
+  Number: "Number",
+  True: "True",
+  False: "False",
+  Import: "Import",
+  Addon: "Addon",
+  Item: "Item",
+  Block: "Block",
+  Entity: "Entity",
+  Recipe: "Recipe",
+  LootTable: "LootTable",
+  Function: "Function",
+  Animation: "Animation",
+  AnimationController: "AnimationController",
+  SpawnRule: "SpawnRule",
+  Locale: "Locale",
+  ScriptModule: "ScriptModule",
+  At: "At",
+  Dot: "Dot",
+  Colon: "Colon",
+  Semicolon: "Semicolon",
+  Comma: "Comma",
+  LeftBrace: "LeftBrace",
+  RightBrace: "RightBrace",
+  LeftBracket: "LeftBracket",
+  RightBracket: "RightBracket"
+});
+
+export const keywordKinds = new Map([
+  ["import", TokenKind.Import],
+  ["addon", TokenKind.Addon],
+  ["item", TokenKind.Item],
+  ["block", TokenKind.Block],
+  ["entity", TokenKind.Entity],
+  ["recipe", TokenKind.Recipe],
+  ["loot_table", TokenKind.LootTable],
+  ["function", TokenKind.Function],
+  ["animation", TokenKind.Animation],
+  ["animation_controller", TokenKind.AnimationController],
+  ["spawn_rule", TokenKind.SpawnRule],
+  ["locale", TokenKind.Locale],
+  ["script_module", TokenKind.ScriptModule],
+  ["true", TokenKind.True],
+  ["false", TokenKind.False]
+]);
+
+export const declarationTokenKinds = new Set([
+  TokenKind.Addon,
+  TokenKind.Item,
+  TokenKind.Block,
+  TokenKind.Entity,
+  TokenKind.Recipe,
+  TokenKind.LootTable,
+  TokenKind.Function,
+  TokenKind.Animation,
+  TokenKind.AnimationController,
+  TokenKind.SpawnRule,
+  TokenKind.Locale,
+  TokenKind.ScriptModule
+]);

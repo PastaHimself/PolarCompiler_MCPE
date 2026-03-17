@@ -1,0 +1,22 @@
+export const DiagnosticCode = Object.freeze({
+  BadCharacter: "BCA1001",
+  UnterminatedString: "BCA1002",
+  UnterminatedComment: "BCA1003",
+  UnexpectedToken: "BCA1004",
+  ExpectedToken: "BCA1005",
+  InvalidImportPath: "BCA1006",
+  DuplicateDeclaration: "BCA2001",
+  DuplicateMember: "BCA2002",
+  MissingAddon: "BCA2003",
+  MultipleAddons: "BCA2004",
+  UnresolvedReference: "BCA2005",
+  WrongReferenceKind: "BCA2006",
+  InvalidNamespace: "BCA3001",
+  InvalidIdentifier: "BCA3002",
+  InvalidVersion: "BCA3003",
+  MissingRequiredField: "BCA3004",
+  InvalidLocale: "BCA3005",
+  ImportCycle: "BCA3006",
+  InvalidConfig: "BCA4001",
+  WriteFailure: "BCA5001"
+});

@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/bedrockc.config.schema.json",
+  "type": "object",
+  "required": ["project"],
+  "properties": {
+    "entry": {
+      "type": "string"
+    },
+    "srcDir": {
+      "type": "string"
+    },
+    "outDir": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object",
+      "required": ["slug", "namespace", "version", "target"],
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "version": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "target": {
+          "type": "string"
+        },
+        "minEngineVersion": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "packs": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "$ref": "#/$defs/pack"
+        },
+        "resource": {
+          "$ref": "#/$defs/pack"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scripts": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["module", "version"],
+            "properties": {
+              "module": {
+                "type": "string"
+              },
+              "version": {
+                "type": ["string", "array"]
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "pack": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "headerUuid": {
+          "type": "string"
+        },
+        "moduleUuid": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

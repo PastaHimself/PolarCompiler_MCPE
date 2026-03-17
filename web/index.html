@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>bedrockc Workbench</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">B</div>
+          <div>
+            <p class="eyebrow">Minecraft Bedrock Add-On Compiler</p>
+            <h1>bedrockc Workbench</h1>
+          </div>
+        </div>
+        <div class="topbar-meta">
+          <span class="status-pill" id="bridge-pill">Bridge: Browser Preview</span>
+          <span class="status-pill status-idle" id="run-state-pill">Idle</span>
+        </div>
+      </header>
+
+      <main class="workspace-shell">
+        <section class="hero-card panel">
+          <div class="hero-copy">
+            <p class="eyebrow">Compile cleanly. Inspect confidently.</p>
+            <h2>A modern front end for authoring, validating, and previewing Bedrock add-ons.</h2>
+            <p class="hero-text">
+              This workbench models the real compiler flow: source files, config, diagnostics,
+              manifests, and generated Behavior Pack and Resource Pack outputs in one place.
+            </p>
+            <div class="hero-flow">
+              <span>Source</span>
+              <span>Validate</span>
+              <span>Lower</span>
+              <span>Emit BP/RP</span>
+            </div>
+          </div>
+          <div class="hero-stats">
+            <article class="stat-tile">
+              <strong>12</strong>
+              <span>declaration kinds</span>
+            </article>
+            <article class="stat-tile">
+              <strong>2</strong>
+              <span>pack targets</span>
+            </article>
+            <article class="stat-tile">
+              <strong>Stable</strong>
+              <span>JSON output</span>
+            </article>
+          </div>
+        </section>
+
+        <div class="workbench-grid">
+          <aside class="panel nav-panel">
+            <section class="panel-section">
+              <div class="section-heading">
+                <p class="eyebrow">Project</p>
+                <h3>Authoring Surface</h3>
+              </div>
+              <div class="project-summary">
+                <div>
+                  <span class="summary-label">Entrypoint</span>
+                  <strong>src/main.bca</strong>
+                </div>
+                <div>
+                  <span class="summary-label">Config</span>
+                  <strong>bedrockc.config.json</strong>
+                </div>
+                <div>
+                  <span class="summary-label">Target</span>
+                  <strong id="target-version">1.21.100</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <div class="section-heading">
+                <p class="eyebrow">Files</p>
+                <h3>Source Files</h3>
+              </div>
+              <div class="file-list" id="editor-file-list"></div>
+            </section>
+
+            <section class="panel-section">
+              <div class="section-heading">
+                <p class="eyebrow">Signals</p>
+                <h3>Compile Snapshot</h3>
+              </div>
+              <div class="mini-metrics">
+                <article>
+                  <span>Diagnostics</span>
+                  <strong id="metric-diagnostics">0</strong>
+                </article>
+                <article>
+                  <span>Generated files</span>
+                  <strong id="metric-outputs">0</strong>
+                </article>
+                <article>
+                  <span>Last duration</span>
+                  <strong id="metric-duration">0ms</strong>
+                </article>
+              </div>
+            </section>
+          </aside>
+
+          <section class="panel editor-panel">
+            <div class="command-bar">
+              <div class="command-copy">
+                <p class="eyebrow">Compiler Controls</p>
+                <h3>Validate input and preview emitted Bedrock files.</h3>
+              </div>
+              <div class="command-actions">
+                <button class="ghost-button" id="reset-button" type="button">Reset Sample</button>
+                <button class="ghost-button" id="validate-button" type="button">Validate</button>
+                <button class="primary-button" id="build-button" type="button">Build</button>
+                <button class="ghost-button" id="watch-button" type="button">Watch Off</button>
+              </div>
+            </div>
+
+            <div class="editor-card">
+              <div class="editor-toolbar">
+                <div class="tab-strip" id="editor-tabs"></div>
+                <div class="editor-meta">
+                  <span class="chip">Editable</span>
+                  <span class="chip chip-muted">Local state</span>
+                </div>
+              </div>
+              <label class="editor-frame">
+                <span class="screenreader-only">Compiler source editor</span>
+                <textarea id="editor-textarea" spellcheck="false"></textarea>
+              </label>
+            </div>
+          </section>
+
+          <aside class="panel insight-panel">
+            <section class="panel-section">
+              <div class="section-heading">
+                <p class="eyebrow">Run Summary</p>
+                <h3>Compiler Status</h3>
+              </div>
+              <div class="summary-stack">
+                <div class="summary-card">
+                  <span class="summary-label">Last command</span>
+                  <strong id="last-command">Not run yet</strong>
+                </div>
+                <div class="summary-card">
+                  <span class="summary-label">Output mode</span>
+                  <strong id="bridge-mode">Browser Preview Adapter</strong>
+                </div>
+                <div class="summary-card">
+                  <span class="summary-label">Watch mode</span>
+                  <strong id="watch-state">Disabled</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-section diagnostics-panel">
+              <div class="section-heading">
+                <p class="eyebrow">Diagnostics</p>
+                <h3>Compiler Messages</h3>
+              </div>
+              <div class="diagnostic-list" id="diagnostic-list"></div>
+            </section>
+          </aside>
+        </div>
+
+        <section class="panel output-panel">
+          <div class="output-header">
+            <div>
+              <p class="eyebrow">Generated Output</p>
+              <h3>Behavior Pack and Resource Pack preview</h3>
+            </div>
+            <button class="ghost-button" id="copy-output-button" type="button">Copy File</button>
+          </div>
+
+          <div class="output-grid">
+            <div class="output-list" id="output-file-list"></div>
+            <div class="output-viewer">
+              <div class="output-viewer-header">
+                <strong id="active-output-name">No output selected</strong>
+                <span class="chip chip-muted" id="active-output-kind">Text</span>
+              </div>
+              <pre id="output-content"></pre>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
