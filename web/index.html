@@ -32,63 +32,69 @@
         <section class="hero-card panel">
           <div class="hero-copy">
             <p class="eyebrow">Compile cleanly. Inspect confidently.</p>
-            <h2>A modern front end for authoring, validating, and previewing Bedrock add-ons.</h2>
+            <h2>Author source projects or upload Bedrock add-on archives in one public workbench.</h2>
             <p class="hero-text">
-              This workbench models the real compiler flow: source files, config, diagnostics,
-              manifests, and generated Behavior Pack and Resource Pack outputs in one place.
+              Switch between `Editor` mode for `.bca` source compilation and `Upload` mode for
+              `.mcaddon`, `.mcpack`, and `.zip` analysis with diagnostics, manifests, and file previews.
             </p>
             <div class="hero-flow">
-              <span>Source</span>
+              <span>Editor</span>
+              <span>Upload</span>
               <span>Validate</span>
-              <span>Lower</span>
-              <span>Emit BP/RP</span>
+              <span>Inspect Packs</span>
             </div>
           </div>
           <div class="hero-stats">
             <article class="stat-tile">
-              <strong>12</strong>
-              <span>declaration kinds</span>
+              <strong>3</strong>
+              <span>archive formats</span>
             </article>
             <article class="stat-tile">
               <strong>2</strong>
-              <span>pack targets</span>
+              <span>workbench modes</span>
             </article>
             <article class="stat-tile">
-              <strong>Stable</strong>
-              <span>JSON output</span>
+              <strong>Deep</strong>
+              <span>pack validation</span>
             </article>
           </div>
         </section>
+
+        <div class="mode-switch panel">
+          <div>
+            <p class="eyebrow">Workbench Mode</p>
+            <h3>Choose how you want to analyze add-ons.</h3>
+          </div>
+          <div class="mode-switch-actions">
+            <button class="mode-button is-active" id="mode-editor-button" type="button">Editor</button>
+            <button class="mode-button" id="mode-upload-button" type="button">Upload</button>
+          </div>
+        </div>
 
         <div class="workbench-grid">
           <aside class="panel nav-panel">
             <section class="panel-section">
               <div class="section-heading">
                 <p class="eyebrow">Project</p>
-                <h3>Authoring Surface</h3>
+                <h3>Workbench Snapshot</h3>
               </div>
-              <div class="project-summary">
-                <div>
-                  <span class="summary-label">Entrypoint</span>
-                  <strong>src/main.bca</strong>
-                </div>
-                <div>
-                  <span class="summary-label">Config</span>
-                  <strong>bedrockc.config.json</strong>
-                </div>
-                <div>
-                  <span class="summary-label">Target</span>
-                  <strong id="target-version">1.21.100</strong>
-                </div>
-              </div>
+              <div class="project-summary" id="summary-panel"></div>
             </section>
 
-            <section class="panel-section">
+            <section class="panel-section" id="editor-nav-section">
               <div class="section-heading">
                 <p class="eyebrow">Files</p>
                 <h3>Source Files</h3>
               </div>
               <div class="file-list" id="editor-file-list"></div>
+            </section>
+
+            <section class="panel-section" id="upload-nav-section" hidden>
+              <div class="section-heading">
+                <p class="eyebrow">Upload</p>
+                <h3>Archive Status</h3>
+              </div>
+              <div class="upload-summary-list" id="upload-summary-list"></div>
             </section>
 
             <section class="panel-section">
@@ -114,31 +120,63 @@
           </aside>
 
           <section class="panel editor-panel">
-            <div class="command-bar">
-              <div class="command-copy">
-                <p class="eyebrow">Compiler Controls</p>
-                <h3>Validate input and preview emitted Bedrock files.</h3>
+            <div id="editor-workbench">
+              <div class="command-bar">
+                <div class="command-copy">
+                  <p class="eyebrow">Compiler Controls</p>
+                  <h3>Validate input and preview emitted Bedrock files.</h3>
+                </div>
+                <div class="command-actions">
+                  <button class="ghost-button" id="reset-button" type="button">Reset Sample</button>
+                  <button class="ghost-button" id="validate-button" type="button">Validate</button>
+                  <button class="primary-button" id="build-button" type="button">Build</button>
+                  <button class="ghost-button" id="watch-button" type="button">Watch Off</button>
+                </div>
               </div>
-              <div class="command-actions">
-                <button class="ghost-button" id="reset-button" type="button">Reset Sample</button>
-                <button class="ghost-button" id="validate-button" type="button">Validate</button>
-                <button class="primary-button" id="build-button" type="button">Build</button>
-                <button class="ghost-button" id="watch-button" type="button">Watch Off</button>
+
+              <div class="editor-card">
+                <div class="editor-toolbar">
+                  <div class="tab-strip" id="editor-tabs"></div>
+                  <div class="editor-meta">
+                    <span class="chip">Editable</span>
+                    <span class="chip chip-muted">Local state</span>
+                  </div>
+                </div>
+                <label class="editor-frame">
+                  <span class="screenreader-only">Compiler source editor</span>
+                  <textarea id="editor-textarea" spellcheck="false"></textarea>
+                </label>
               </div>
             </div>
 
-            <div class="editor-card">
-              <div class="editor-toolbar">
-                <div class="tab-strip" id="editor-tabs"></div>
-                <div class="editor-meta">
-                  <span class="chip">Editable</span>
-                  <span class="chip chip-muted">Local state</span>
+            <div id="upload-workbench" hidden>
+              <div class="upload-card">
+                <div class="command-bar upload-command-bar">
+                  <div class="command-copy">
+                    <p class="eyebrow">Archive Upload</p>
+                    <h3>Upload one `.mcaddon`, `.mcpack`, or `.zip` file for inspection and validation.</h3>
+                  </div>
+                  <div class="command-actions">
+                    <input id="archive-input" type="file" accept=".mcaddon,.mcpack,.zip" hidden />
+                    <button class="ghost-button" id="choose-archive-button" type="button">Choose Archive</button>
+                    <button class="primary-button" id="analyze-archive-button" type="button">Analyze Upload</button>
+                  </div>
+                </div>
+
+                <div class="dropzone" id="archive-dropzone" tabindex="0" role="button">
+                  <strong>Drop an archive here</strong>
+                  <p>Accepted formats: `.mcaddon`, `.mcpack`, `.zip`</p>
+                  <span class="chip chip-muted" id="selected-archive-label">No file selected</span>
+                </div>
+
+                <div class="upload-detail-card">
+                  <div class="section-heading">
+                    <p class="eyebrow">Archive Summary</p>
+                    <h3>Detected package information</h3>
+                  </div>
+                  <div class="upload-detail-grid" id="upload-detail-grid"></div>
                 </div>
               </div>
-              <label class="editor-frame">
-                <span class="screenreader-only">Compiler source editor</span>
-                <textarea id="editor-textarea" spellcheck="false"></textarea>
-              </label>
             </div>
           </section>
 
@@ -177,10 +215,16 @@
         <section class="panel output-panel">
           <div class="output-header">
             <div>
-              <p class="eyebrow">Generated Output</p>
-              <h3>Behavior Pack and Resource Pack preview</h3>
+              <p class="eyebrow">Explorer</p>
+              <h3>Archive files and generated output</h3>
             </div>
-            <button class="ghost-button" id="copy-output-button" type="button">Copy File</button>
+            <div class="output-header-actions">
+              <div class="explorer-toggle">
+                <button class="mode-button is-active" id="explorer-files-button" type="button">Archive Files</button>
+                <button class="mode-button" id="explorer-outputs-button" type="button">Generated Output</button>
+              </div>
+              <button class="ghost-button" id="copy-output-button" type="button">Copy File</button>
+            </div>
           </div>
 
           <div class="output-grid">

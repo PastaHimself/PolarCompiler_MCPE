@@ -38,19 +38,10 @@ const SAMPLE_CONFIG = `{
     "target": "1.21.100"
   },
   "packs": {
-    "behavior": {
-      "name": "Hello BP",
-      "description": "Behavior pack"
-    },
-    "resource": {
-      "name": "Hello RP",
-      "description": "Resource pack"
-    }
+    "behavior": { "name": "Hello BP", "description": "Behavior pack" },
+    "resource": { "name": "Hello RP", "description": "Resource pack" }
   },
-  "scripts": {
-    "enabled": false,
-    "modules": []
-  }
+  "scripts": { "enabled": false, "modules": [] }
 }`;
 
 const editorFiles = [
@@ -61,10 +52,13 @@ const editorFiles = [
 const elements = {
   bridgePill: document.querySelector("#bridge-pill"),
   runStatePill: document.querySelector("#run-state-pill"),
+  summaryPanel: document.querySelector("#summary-panel"),
+  editorNavSection: document.querySelector("#editor-nav-section"),
+  uploadNavSection: document.querySelector("#upload-nav-section"),
   editorFileList: document.querySelector("#editor-file-list"),
+  uploadSummaryList: document.querySelector("#upload-summary-list"),
   editorTabs: document.querySelector("#editor-tabs"),
   textarea: document.querySelector("#editor-textarea"),
-  targetVersion: document.querySelector("#target-version"),
   metricDiagnostics: document.querySelector("#metric-diagnostics"),
   metricOutputs: document.querySelector("#metric-outputs"),
   metricDuration: document.querySelector("#metric-duration"),
@@ -80,23 +74,39 @@ const elements = {
   buildButton: document.querySelector("#build-button"),
   watchButton: document.querySelector("#watch-button"),
   resetButton: document.querySelector("#reset-button"),
-  copyOutputButton: document.querySelector("#copy-output-button")
+  copyOutputButton: document.querySelector("#copy-output-button"),
+  modeEditorButton: document.querySelector("#mode-editor-button"),
+  modeUploadButton: document.querySelector("#mode-upload-button"),
+  editorWorkbench: document.querySelector("#editor-workbench"),
+  uploadWorkbench: document.querySelector("#upload-workbench"),
+  archiveInput: document.querySelector("#archive-input"),
+  chooseArchiveButton: document.querySelector("#choose-archive-button"),
+  analyzeArchiveButton: document.querySelector("#analyze-archive-button"),
+  archiveDropzone: document.querySelector("#archive-dropzone"),
+  selectedArchiveLabel: document.querySelector("#selected-archive-label"),
+  uploadDetailGrid: document.querySelector("#upload-detail-grid"),
+  explorerFilesButton: document.querySelector("#explorer-files-button"),
+  explorerOutputsButton: document.querySelector("#explorer-outputs-button")
 };
 
-const compilerBridge = createCompilerBridge();
 const state = {
+  workbenchMode: "editor",
+  explorerMode: "files",
   files: {
     "src/main.bca": loadStoredValue(STORAGE_KEYS.source, SAMPLE_SOURCE),
     "bedrockc.config.json": loadStoredValue(STORAGE_KEYS.config, SAMPLE_CONFIG)
   },
   activeEditorFile: "src/main.bca",
+  archive: null,
+  archiveSummary: null,
+  archiveFiles: [],
   outputs: [],
-  activeOutputPath: null,
+  activePreviewPath: null,
   diagnostics: [],
   watchEnabled: false,
   running: false,
-  lastDurationMs: 0,
-  lastCommand: "Not run yet"
+  lastCommand: "Not run yet",
+  bridgeLabel: isHttpMode() ? "Vercel API" : "Browser Preview"
 };
 
 let watchTimer = null;
@@ -104,37 +114,52 @@ let watchTimer = null;
 initialize();
 
 function initialize() {
-  setBridgeLabel(compilerBridge.label);
-
+  setBridgeLabel(state.bridgeLabel);
+  attachEvents();
   renderEditorFileButtons();
   renderEditorTabs();
   renderEditor();
-  syncConfigMeta();
+  renderMode();
+  renderSummaryPanel();
+  renderUploadSummary();
+  renderUploadDetails();
   renderDiagnostics();
-  renderOutputs();
+  renderExplorer();
+  renderMetrics(0);
   renderRunState("Idle", "status-idle");
-  attachEvents();
-  void runCommand("build");
+  void runEditorCommand("build");
 }
 
 function attachEvents() {
   elements.textarea.addEventListener("input", (event) => {
     state.files[state.activeEditorFile] = event.target.value;
     persistCurrentEditor();
-    syncConfigMeta();
-    if (state.watchEnabled) {
+    renderSummaryPanel();
+    if (state.watchEnabled && state.workbenchMode === "editor") {
       scheduleWatchBuild();
     }
   });
 
-  elements.validateButton.addEventListener("click", () => void runCommand("validate"));
-  elements.buildButton.addEventListener("click", () => void runCommand("build"));
+  elements.validateButton.addEventListener("click", () => void runEditorCommand("validate"));
+  elements.buildButton.addEventListener("click", () => void runEditorCommand("build"));
   elements.resetButton.addEventListener("click", resetSample);
   elements.watchButton.addEventListener("click", toggleWatch);
-  elements.copyOutputButton.addEventListener("click", () => void copyActiveOutput());
+  elements.copyOutputButton.addEventListener("click", () => void copyActivePreview());
+  elements.modeEditorButton.addEventListener("click", () => switchWorkbenchMode("editor"));
+  elements.modeUploadButton.addEventListener("click", () => switchWorkbenchMode("upload"));
+  elements.explorerFilesButton.addEventListener("click", () => switchExplorerMode("files"));
+  elements.explorerOutputsButton.addEventListener("click", () => switchExplorerMode("outputs"));
+  elements.chooseArchiveButton.addEventListener("click", () => elements.archiveInput.click());
+  elements.archiveInput.addEventListener("change", (event) => {
+    selectArchive(event.target.files?.[0] ?? null);
+  });
+  elements.analyzeArchiveButton.addEventListener("click", () => void runArchiveAnalysis());
+  elements.archiveDropzone.addEventListener("dragover", onArchiveDragOver);
+  elements.archiveDropzone.addEventListener("dragleave", onArchiveDragLeave);
+  elements.archiveDropzone.addEventListener("drop", onArchiveDrop);
 }
 
-async function runCommand(command, fromWatch = false) {
+async function runEditorCommand(command, fromWatch = false) {
   if (state.running) {
     return;
   }
@@ -145,87 +170,195 @@ async function runCommand(command, fromWatch = false) {
   renderRunState("Running", "status-running");
 
   try {
-    const payload = {
-      command,
-      files: structuredClone(state.files)
-    };
-    const rawResult = await compilerBridge[command](payload);
-    const result = normalizeBridgeResult(rawResult);
-    if (result.bridgeLabel) {
-      setBridgeLabel(result.bridgeLabel);
-    }
-
-    state.diagnostics = result.diagnostics;
-    state.outputs = result.outputs;
-    state.lastDurationMs = result.durationMs;
-
-    if (!state.activeOutputPath || !state.outputs.some((output) => output.path === state.activeOutputPath)) {
-      state.activeOutputPath = state.outputs[0]?.path ?? null;
-    }
-
-    renderDiagnostics();
-    renderOutputs();
-    renderMetrics(result);
-
-    const statusClass = hasErrors(result.diagnostics) ? "status-error" : "status-success";
-    const statusText = hasErrors(result.diagnostics) ? "Needs fixes" : "Ready";
-    renderRunState(statusText, statusClass);
+    const result = isHttpMode()
+      ? await invokeApiCompile(command, state.files)
+      : await runPreviewCompilation(command, state.files);
+    applyEditorResult(result);
   } catch (error) {
-    state.diagnostics = [
-      {
-        severity: "error",
-        code: "UI9001",
-        message: error.message ?? "Unexpected workbench failure.",
-        file: "workbench",
-        line: 1,
-        column: 1
-      }
-    ];
-    state.outputs = [];
-    renderDiagnostics();
-    renderOutputs();
-    renderMetrics({ diagnostics: state.diagnostics, outputs: [], durationMs: 0 });
-    renderRunState("Failed", "status-error");
+    applyFailure(error);
   } finally {
     state.running = false;
   }
 }
 
-function normalizeBridgeResult(result) {
-  const diagnostics = Array.isArray(result?.diagnostics) ? result.diagnostics : [];
-  const outputs = normalizeOutputs(result?.outputs);
+async function runArchiveAnalysis() {
+  if (state.running) {
+    return;
+  }
 
-  return {
-    bridgeLabel: result?.bridgeLabel ?? null,
-    diagnostics,
-    outputs,
-    durationMs: Math.round(Number(result?.durationMs ?? 0))
-  };
+  if (!state.archive) {
+    state.diagnostics = [
+      {
+        severity: "warning",
+        code: "ARC0001",
+        message: "Choose an archive before running upload analysis.",
+        file: "upload",
+        line: 1,
+        column: 1
+      }
+    ];
+    renderDiagnostics();
+    return;
+  }
+
+  state.running = true;
+  state.lastCommand = "Analyze upload";
+  elements.lastCommand.textContent = state.lastCommand;
+  renderRunState("Running", "status-running");
+
+  try {
+    const result = await invokeApiArchive(state.archive);
+    applyArchiveResult(result);
+  } catch (error) {
+    applyFailure(error);
+  } finally {
+    state.running = false;
+  }
 }
 
-function normalizeOutputs(outputs) {
-  if (Array.isArray(outputs)) {
-    return outputs.map((output) => ({
-      path: output.path,
-      kind: output.kind ?? inferOutputKind(output.path),
-      content: output.content ?? ""
-    }));
-  }
+function applyEditorResult(result) {
+  state.bridgeLabel = result.bridgeLabel ?? state.bridgeLabel;
+  setBridgeLabel(state.bridgeLabel);
+  state.archiveSummary = null;
+  state.archiveFiles = [];
+  state.outputs = normalizeEntries(result.outputs);
+  state.diagnostics = normalizeDiagnostics(result.diagnostics);
+  state.explorerMode = state.outputs.length > 0 ? "outputs" : "files";
+  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  renderAll(result.durationMs ?? 0);
+  renderRunState(hasErrors(state.diagnostics) ? "Needs fixes" : "Ready", hasErrors(state.diagnostics) ? "status-error" : "status-success");
+}
 
-  if (outputs && typeof outputs === "object") {
-    return Object.entries(outputs).map(([path, content]) => ({
-      path,
-      kind: inferOutputKind(path),
-      content: typeof content === "string" ? content : JSON.stringify(content, null, 2)
-    }));
-  }
+function applyArchiveResult(result) {
+  state.bridgeLabel = result.bridgeLabel ?? state.bridgeLabel;
+  setBridgeLabel(state.bridgeLabel);
+  state.archiveSummary = result.summary ?? null;
+  state.archiveFiles = normalizeEntries(result.files);
+  state.outputs = normalizeEntries(result.outputs);
+  state.diagnostics = normalizeDiagnostics(result.diagnostics);
+  state.explorerMode = "files";
+  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  renderAll(result.durationMs ?? 0);
+  renderRunState(hasErrors(state.diagnostics) ? "Needs fixes" : "Analyzed", hasErrors(state.diagnostics) ? "status-error" : "status-success");
+}
 
-  return [];
+function applyFailure(error) {
+  state.diagnostics = [
+    {
+      severity: "error",
+      code: "UI9001",
+      message: error.message ?? "Unexpected workbench failure.",
+      file: "workbench",
+      line: 1,
+      column: 1
+    }
+  ];
+  state.archiveFiles = [];
+  state.outputs = [];
+  state.activePreviewPath = null;
+  renderAll(0);
+  renderRunState("Failed", "status-error");
+}
+
+function renderAll(durationMs) {
+  renderMode();
+  renderSummaryPanel();
+  renderUploadSummary();
+  renderUploadDetails();
+  renderDiagnostics();
+  renderExplorer();
+  renderMetrics(durationMs);
+}
+
+function renderMode() {
+  const editorMode = state.workbenchMode === "editor";
+  elements.modeEditorButton.classList.toggle("is-active", editorMode);
+  elements.modeUploadButton.classList.toggle("is-active", !editorMode);
+  elements.editorWorkbench.hidden = !editorMode;
+  elements.uploadWorkbench.hidden = editorMode;
+  elements.editorNavSection.hidden = !editorMode;
+  elements.uploadNavSection.hidden = editorMode;
+}
+
+function renderSummaryPanel() {
+  const entries = state.workbenchMode === "editor"
+    ? [
+        ["Mode", "Editor"],
+        ["Entrypoint", "src/main.bca"],
+        ["Config", "bedrockc.config.json"],
+        ["Target", currentTargetVersion()]
+      ]
+    : [
+        ["Mode", "Upload"],
+        ["Archive", state.archive?.name ?? "None selected"],
+        ["Detected", state.archiveSummary?.detectedType ?? "Awaiting upload"],
+        ["Type", state.archive ? inferArchiveType(state.archive.name) : "Unknown"]
+      ];
+
+  elements.summaryPanel.innerHTML = entries
+    .map(
+      ([label, value]) => `
+        <div>
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderUploadSummary() {
+  const items = state.archiveSummary
+    ? [
+        ["Detected", state.archiveSummary.detectedType ?? "Unknown"],
+        ["Packs", String(state.archiveSummary.packCount ?? 0)],
+        ["Files", String(state.archiveSummary.fileCount ?? 0)],
+        ["Size", formatBytes(state.archiveSummary.size ?? state.archive?.size ?? 0)]
+      ]
+    : [
+        ["Detected", "No upload analyzed"],
+        ["Packs", "0"],
+        ["Files", "0"],
+        ["Size", formatBytes(state.archive?.size ?? 0)]
+      ];
+
+  elements.uploadSummaryList.innerHTML = items
+    .map(
+      ([label, value]) => `
+        <div class="summary-card">
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderUploadDetails() {
+  const details = [
+    ["File", state.archive?.name ?? "No archive selected"],
+    ["Archive type", state.archive ? inferArchiveType(state.archive.name) : "Unknown"],
+    ["Detected project", state.archiveSummary?.detectedType ?? "Awaiting analysis"],
+    ["Pack count", String(state.archiveSummary?.packCount ?? 0)],
+    ["File count", String(state.archiveSummary?.fileCount ?? 0)],
+    ["Size", formatBytes(state.archiveSummary?.size ?? state.archive?.size ?? 0)]
+  ];
+
+  elements.selectedArchiveLabel.textContent = state.archive?.name ?? "No file selected";
+  elements.uploadDetailGrid.innerHTML = details
+    .map(
+      ([label, value]) => `
+        <article class="summary-card">
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
 }
 
 function renderEditorFileButtons() {
   elements.editorFileList.innerHTML = "";
-
   for (const file of editorFiles) {
     const button = document.createElement("button");
     button.type = "button";
@@ -243,7 +376,6 @@ function renderEditorFileButtons() {
 
 function renderEditorTabs() {
   elements.editorTabs.innerHTML = "";
-
   for (const file of editorFiles) {
     const button = document.createElement("button");
     button.type = "button";
@@ -265,15 +397,16 @@ function renderEditor() {
 
 function renderDiagnostics() {
   elements.diagnosticList.innerHTML = "";
-
   const diagnostics = state.diagnostics.length > 0
     ? state.diagnostics
     : [
         {
           severity: "success",
           code: "UI0000",
-          message: "No diagnostics. The current project shape is ready for emission.",
-          file: "compiler",
+          message: state.workbenchMode === "editor"
+            ? "No diagnostics. The current project shape is ready for emission."
+            : "No diagnostics yet. Upload an archive to inspect it.",
+          file: "workbench",
           line: 1,
           column: 1
         }
@@ -283,7 +416,7 @@ function renderDiagnostics() {
     const item = document.createElement("article");
     item.className = `diagnostic-item is-${diagnostic.severity}`;
     item.innerHTML = `
-      <strong>${diagnostic.severity.toUpperCase()} ${diagnostic.code}</strong>
+      <strong>${diagnostic.severity.toUpperCase()} ${escapeHtml(diagnostic.code)}</strong>
       <p>${escapeHtml(diagnostic.message)}</p>
       <p>${escapeHtml(formatLocation(diagnostic))}</p>
     `;
@@ -291,44 +424,74 @@ function renderDiagnostics() {
   }
 }
 
-function renderOutputs() {
+function renderExplorer() {
+  const filesMode = state.explorerMode === "files";
+  elements.explorerFilesButton.classList.toggle("is-active", filesMode);
+  elements.explorerOutputsButton.classList.toggle("is-active", !filesMode);
+  const entries = currentExplorerEntries();
   elements.outputFileList.innerHTML = "";
 
-  if (state.outputs.length === 0) {
-    elements.activeOutputName.textContent = "No output selected";
+  if (entries.length === 0) {
+    elements.activeOutputName.textContent = filesMode ? "No archive file selected" : "No output selected";
     elements.activeOutputKind.textContent = "Text";
-    elements.outputContent.textContent = "Run a successful build to preview generated Bedrock files.";
+    elements.outputContent.textContent = filesMode
+      ? "Upload and analyze an archive to preview unpacked files."
+      : "Run a successful build to preview generated Bedrock files.";
     return;
   }
 
-  for (const output of state.outputs) {
+  for (const entry of entries) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `output-button${output.path === state.activeOutputPath ? " is-active" : ""}`;
-    button.textContent = output.path;
+    button.className = `output-button${entry.path === state.activePreviewPath ? " is-active" : ""}`;
+    button.textContent = entry.path;
     button.addEventListener("click", () => {
-      state.activeOutputPath = output.path;
-      renderOutputs();
+      state.activePreviewPath = entry.path;
+      renderExplorer();
     });
     elements.outputFileList.append(button);
   }
 
-  const activeOutput = state.outputs.find((output) => output.path === state.activeOutputPath) ?? state.outputs[0];
-  state.activeOutputPath = activeOutput.path;
-  elements.activeOutputName.textContent = activeOutput.path;
-  elements.activeOutputKind.textContent = activeOutput.kind.toUpperCase();
-  elements.outputContent.textContent = activeOutput.content;
+  const activeEntry = entries.find((entry) => entry.path === state.activePreviewPath) ?? entries[0];
+  state.activePreviewPath = activeEntry.path;
+  elements.activeOutputName.textContent = activeEntry.path;
+  elements.activeOutputKind.textContent = activeEntry.previewable === false ? "Binary" : activeEntry.kind.toUpperCase();
+  elements.outputContent.textContent = activeEntry.previewable === false
+    ? "Binary file preview is not available."
+    : activeEntry.content;
 }
 
-function renderMetrics(result) {
-  elements.metricDiagnostics.textContent = `${result.diagnostics.filter((item) => item.severity !== "success").length}`;
-  elements.metricOutputs.textContent = `${result.outputs.length}`;
-  elements.metricDuration.textContent = `${result.durationMs}ms`;
+function renderMetrics(durationMs) {
+  elements.metricDiagnostics.textContent = String(
+    state.diagnostics.filter((item) => item.severity !== "success").length
+  );
+  elements.metricOutputs.textContent = String(state.outputs.length);
+  elements.metricDuration.textContent = `${Math.round(durationMs || 0)}ms`;
 }
 
 function renderRunState(label, className) {
   elements.runStatePill.textContent = label;
   elements.runStatePill.className = `status-pill ${className}`;
+}
+
+function switchWorkbenchMode(mode) {
+  state.workbenchMode = mode;
+  if (mode === "upload") {
+    state.watchEnabled = false;
+    elements.watchButton.classList.remove("is-toggled");
+    elements.watchButton.textContent = "Watch Off";
+    elements.watchState.textContent = "Disabled";
+  }
+  renderMode();
+  renderSummaryPanel();
+  renderDiagnostics();
+  renderExplorer();
+}
+
+function switchExplorerMode(mode) {
+  state.explorerMode = mode;
+  state.activePreviewPath = currentExplorerEntries()[0]?.path ?? null;
+  renderExplorer();
 }
 
 function toggleWatch() {
@@ -349,8 +512,21 @@ function scheduleWatchBuild() {
     clearTimeout(watchTimer);
   }
   watchTimer = setTimeout(() => {
-    void runCommand("build", true);
+    if (state.workbenchMode === "editor") {
+      void runEditorCommand("build", true);
+    }
   }, 600);
+}
+
+function selectArchive(file) {
+  state.archive = file;
+  state.archiveSummary = null;
+  state.archiveFiles = [];
+  state.outputs = [];
+  state.activePreviewPath = null;
+  renderUploadSummary();
+  renderUploadDetails();
+  renderExplorer();
 }
 
 function resetSample() {
@@ -358,19 +534,19 @@ function resetSample() {
   state.files["bedrockc.config.json"] = SAMPLE_CONFIG;
   localStorage.removeItem(STORAGE_KEYS.source);
   localStorage.removeItem(STORAGE_KEYS.config);
-  syncConfigMeta();
   renderEditor();
-  void runCommand("build");
+  renderSummaryPanel();
+  void runEditorCommand("build");
 }
 
-async function copyActiveOutput() {
-  const activeOutput = state.outputs.find((output) => output.path === state.activeOutputPath);
-  if (!activeOutput) {
+async function copyActivePreview() {
+  const activeEntry = currentExplorerEntries().find((entry) => entry.path === state.activePreviewPath);
+  if (!activeEntry || activeEntry.previewable === false) {
     return;
   }
 
   try {
-    await navigator.clipboard.writeText(activeOutput.content);
+    await navigator.clipboard.writeText(activeEntry.content);
     const original = elements.copyOutputButton.textContent;
     elements.copyOutputButton.textContent = "Copied";
     setTimeout(() => {
@@ -392,51 +568,45 @@ function persistCurrentEditor() {
   localStorage.setItem(entry.storageKey, state.files[state.activeEditorFile]);
 }
 
-function syncConfigMeta() {
-  try {
-    const config = JSON.parse(state.files["bedrockc.config.json"]);
-    elements.targetVersion.textContent = config.project?.target ?? "Unknown";
-  } catch {
-    elements.targetVersion.textContent = "Invalid config";
+async function invokeApiCompile(command, files) {
+  const response = await fetch("/api/compile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ command, files })
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok && result) {
+    return result;
   }
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}.`);
+  }
+  return result;
 }
 
-function createCompilerBridge() {
-  if (globalThis.bedrockcBridge && typeof globalThis.bedrockcBridge.build === "function") {
-    return {
-      label: "Host Bridge",
-      validate: (payload) =>
-        typeof globalThis.bedrockcBridge.validate === "function"
-          ? globalThis.bedrockcBridge.validate(payload)
-          : globalThis.bedrockcBridge.build(payload),
-      build: (payload) => globalThis.bedrockcBridge.build(payload)
-    };
+async function invokeApiArchive(file) {
+  const formData = new FormData();
+  formData.append("archive", file);
+  const response = await fetch("/api/archive", { method: "POST", body: formData });
+  const result = await response.json().catch(() => null);
+  if (!response.ok && result) {
+    return result;
   }
-
-  if (window.location.protocol !== "file:") {
-    return {
-      label: "Vercel API",
-      validate: (payload) => invokeApiCompile("validate", payload),
-      build: (payload) => invokeApiCompile("build", payload)
-    };
+  if (!response.ok) {
+    throw new Error(`Archive request failed with status ${response.status}.`);
   }
-
-  return {
-    label: "Browser Preview",
-    validate: (payload) => runPreviewCompilation(payload, "validate"),
-    build: (payload) => runPreviewCompilation(payload, "build")
-  };
+  return result;
 }
 
-async function runPreviewCompilation(payload, command) {
+async function runPreviewCompilation(command, files) {
   const startedAt = performance.now();
   await delay(command === "build" ? 260 : 180);
 
+  let config;
   const diagnostics = [];
-  let config = null;
 
   try {
-    config = JSON.parse(payload.files["bedrockc.config.json"]);
+    config = JSON.parse(files["bedrockc.config.json"]);
   } catch (error) {
     diagnostics.push({
       severity: "error",
@@ -448,11 +618,9 @@ async function runPreviewCompilation(payload, command) {
     });
   }
 
-  const sourceText = payload.files["src/main.bca"] ?? "";
-  const declarations = extractDeclarations(sourceText);
-  const addonDeclaration = declarations.find((declaration) => declaration.kind === "addon");
-
-  if (!addonDeclaration) {
+  const declarations = extractDeclarations(files["src/main.bca"] ?? "");
+  const addon = declarations.find((declaration) => declaration.kind === "addon");
+  if (!addon) {
     diagnostics.push({
       severity: "error",
       code: "BCA2003",
@@ -463,112 +631,32 @@ async function runPreviewCompilation(payload, command) {
     });
   }
 
-  if (declarations.filter((declaration) => declaration.kind === "addon").length > 1) {
-    diagnostics.push({
-      severity: "error",
-      code: "BCA2004",
-      message: "Only one 'addon' declaration is allowed.",
-      file: "src/main.bca",
-      line: addonDeclaration?.line ?? 1,
-      column: 1
-    });
-  }
-
-  const itemDeclarations = declarations.filter((declaration) => declaration.kind === "item");
-  if (itemDeclarations.length === 0) {
-    diagnostics.push({
-      severity: "warning",
-      code: "BCA3101",
-      message: "No item declarations found. The build will only emit pack metadata.",
-      file: "src/main.bca",
-      line: 1,
-      column: 1
-    });
-  }
-
-  const metadata = deriveMetadata(config, addonDeclaration);
+  const metadata = deriveMetadata(config, addon);
   if (!metadata.namespace || !/^[a-z0-9_][a-z0-9_.-]*$/.test(metadata.namespace)) {
     diagnostics.push({
       severity: "error",
       code: "BCA3001",
       message: "Addon namespace must contain lowercase letters, digits, underscores, dots, or hyphens.",
       file: "src/main.bca",
-      line: addonDeclaration?.line ?? 1,
+      line: addon?.line ?? 1,
       column: 1
     });
   }
 
-  const outputs = hasErrors(diagnostics)
-    ? []
-    : buildPreviewOutputs({ metadata, declarations, config });
-
   return {
     bridgeLabel: "Browser Preview",
     diagnostics,
-    outputs,
+    outputs: hasErrors(diagnostics) ? [] : buildPreviewOutputs(metadata, declarations, config),
     durationMs: performance.now() - startedAt
   };
 }
 
-async function invokeApiCompile(command, payload) {
-  try {
-    const response = await fetch("/api/compile", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        command,
-        files: payload.files
-      })
-    });
-
-    const result = await response.json().catch(() => null);
-    if (!response.ok) {
-      if (result) {
-        return {
-          bridgeLabel: "Vercel API",
-          diagnostics: result.diagnostics ?? [
-            {
-              severity: "error",
-              code: "API1001",
-              message: result.message ?? `Request failed with status ${response.status}.`,
-              file: "api/compile",
-              line: 1,
-              column: 1
-            }
-          ],
-          outputs: result.outputs ?? [],
-          durationMs: result.durationMs ?? 0
-        };
-      }
-
-      throw new Error(`Request failed with status ${response.status}.`);
-    }
-
-    return {
-      ...result,
-      bridgeLabel: result?.bridgeLabel ?? "Vercel API"
-    };
-  } catch (error) {
-    if (error instanceof TypeError) {
-      const fallback = await runPreviewCompilation(payload, command);
-      return {
-        ...fallback,
-        bridgeLabel: "Browser Preview Fallback"
-      };
-    }
-    throw error;
-  }
-}
-
-function deriveMetadata(config, addonDeclaration) {
-  const addonFields = addonDeclaration?.members ?? {};
+function deriveMetadata(config, addon) {
+  const addonFields = addon?.members ?? {};
   const slug = config?.project?.slug ?? "hello-addon";
   const version = asVersion(addonFields.version ?? config?.project?.version ?? [1, 0, 0]);
   const target = config?.project?.target ?? "1.21.100";
   const minEngineVersion = asVersion(config?.project?.minEngineVersion ?? versionFromTarget(target));
-
   return {
     slug,
     namespace: addonFields.namespace ?? config?.project?.namespace ?? "demo",
@@ -590,243 +678,83 @@ function deriveMetadata(config, addonDeclaration) {
   };
 }
 
-function buildPreviewOutputs({ metadata, declarations, config }) {
-  const outputs = [];
-  const itemTextures = {};
+function buildPreviewOutputs(metadata, declarations, config) {
+  const outputs = [
+    {
+      path: "behavior_pack/manifest.json",
+      kind: "json",
+      content: stableJson({
+        format_version: 2,
+        header: {
+          name: metadata.behaviorPack.name,
+          description: metadata.behaviorPack.description,
+          uuid: metadata.behaviorPack.headerUuid,
+          version: metadata.version,
+          min_engine_version: metadata.minEngineVersion
+        },
+        modules: [{ type: "data", uuid: metadata.behaviorPack.moduleUuid, version: metadata.version }]
+      })
+    },
+    {
+      path: "resource_pack/manifest.json",
+      kind: "json",
+      content: stableJson({
+        format_version: 2,
+        header: {
+          name: metadata.resourcePack.name,
+          description: metadata.resourcePack.description,
+          uuid: metadata.resourcePack.headerUuid,
+          version: metadata.version,
+          min_engine_version: metadata.minEngineVersion
+        },
+        modules: [{ type: "resources", uuid: metadata.resourcePack.moduleUuid, version: metadata.version }],
+        dependencies: [{ uuid: metadata.behaviorPack.headerUuid, version: metadata.version }]
+      })
+    }
+  ];
+
+  const textures = {};
   const locales = new Map();
 
-  outputs.push({
-    path: "behavior_pack/manifest.json",
-    kind: "json",
-    content: stableJson({
-      format_version: 2,
-      header: {
-        name: metadata.behaviorPack.name,
-        description: metadata.behaviorPack.description,
-        uuid: metadata.behaviorPack.headerUuid,
-        version: metadata.version,
-        min_engine_version: metadata.minEngineVersion
-      },
-      modules: [
-        {
-          type: "data",
-          uuid: metadata.behaviorPack.moduleUuid,
-          version: metadata.version
-        }
-      ]
-    })
-  });
-
-  outputs.push({
-    path: "resource_pack/manifest.json",
-    kind: "json",
-    content: stableJson({
-      format_version: 2,
-      header: {
-        name: metadata.resourcePack.name,
-        description: metadata.resourcePack.description,
-        uuid: metadata.resourcePack.headerUuid,
-        version: metadata.version,
-        min_engine_version: metadata.minEngineVersion
-      },
-      modules: [
-        {
-          type: "resources",
-          uuid: metadata.resourcePack.moduleUuid,
-          version: metadata.version
-        }
-      ],
-      dependencies: [
-        {
-          uuid: metadata.behaviorPack.headerUuid,
-          version: metadata.version
-        }
-      ]
-    })
-  });
-
   for (const declaration of declarations) {
-    switch (declaration.kind) {
-      case "item": {
-        const itemId = declaration.members.id ?? `${metadata.namespace}:${declaration.name}`;
-        const itemPath = declaration.members.path ?? declaration.name;
-        const itemJson = declaration.members.data && isObject(declaration.members.data)
-          ? withFormatVersion(declaration.members.data, metadata.target)
-          : {
-              format_version: metadata.target,
-              "minecraft:item": {
-                description: {
-                  identifier: itemId
-                },
-                components: declaration.members.components ?? {}
-              }
-            };
-
-        outputs.push({
-          path: `behavior_pack/items/${itemPath}.json`,
-          kind: "json",
-          content: stableJson(itemJson)
-        });
-
-        if (declaration.members.icon || declaration.members.texture) {
-          itemTextures[declaration.members.icon ?? declaration.name] = {
-            textures: declaration.members.texture ?? `textures/items/${declaration.name}`
-          };
-        }
-        break;
+    if (declaration.kind === "item") {
+      outputs.push({
+        path: `behavior_pack/items/${declaration.members.path ?? declaration.name}.json`,
+        kind: "json",
+        content: stableJson({
+          format_version: metadata.target,
+          "minecraft:item": {
+            description: { identifier: declaration.members.id ?? `${metadata.namespace}:${declaration.name}` },
+            components: declaration.members.components ?? {}
+          }
+        })
+      });
+      if (declaration.members.icon || declaration.members.texture) {
+        textures[declaration.members.icon ?? declaration.name] = {
+          textures: declaration.members.texture ?? `textures/items/${declaration.name}`
+        };
       }
-      case "block": {
-        const blockId = declaration.members.id ?? `${metadata.namespace}:${declaration.name}`;
-        const blockPath = declaration.members.path ?? declaration.name;
-        const blockJson = declaration.members.data && isObject(declaration.members.data)
-          ? withFormatVersion(declaration.members.data, metadata.target)
-          : {
-              format_version: metadata.target,
-              "minecraft:block": {
-                description: {
-                  identifier: blockId
-                },
-                components: declaration.members.components ?? {}
-              }
-            };
-
-        outputs.push({
-          path: `behavior_pack/blocks/${blockPath}.json`,
-          kind: "json",
-          content: stableJson(blockJson)
-        });
-        break;
-      }
-      case "entity": {
-        const entityId = declaration.members.id ?? `${metadata.namespace}:${declaration.name}`;
-        const entityPath = declaration.members.path ?? declaration.name;
-
-        outputs.push({
-          path: `behavior_pack/entities/${entityPath}.json`,
-          kind: "json",
-          content: stableJson(
-            declaration.members.server && isObject(declaration.members.server)
-              ? withFormatVersion(declaration.members.server, metadata.target)
-              : {
-                  format_version: metadata.target,
-                  "minecraft:entity": {
-                    description: {
-                      identifier: entityId,
-                      is_spawnable: false,
-                      is_summonable: true
-                    },
-                    components: declaration.members.components ?? {}
-                  }
-                }
-          )
-        });
-
-        outputs.push({
-          path: `resource_pack/entity/${entityPath}.entity.json`,
-          kind: "json",
-          content: stableJson(
-            declaration.members.client && isObject(declaration.members.client)
-              ? withFormatVersion(declaration.members.client, metadata.target)
-              : {
-                  format_version: metadata.target,
-                  "minecraft:client_entity": {
-                    description: {
-                      identifier: entityId,
-                      textures: declaration.members.texture ? { default: declaration.members.texture } : {}
-                    }
-                  }
-                }
-          )
-        });
-        break;
-      }
-      case "function": {
-        const pathName = declaration.members.path ?? declaration.name;
-        const lines = Array.isArray(declaration.members.body) ? declaration.members.body : [];
-        outputs.push({
-          path: `behavior_pack/functions/${pathName}.mcfunction`,
-          kind: "text",
-          content: `${lines.join("\n")}\n`
-        });
-        break;
-      }
-      case "recipe": {
-        if (isObject(declaration.members.data)) {
-          outputs.push({
-            path: `behavior_pack/recipes/${declaration.members.path ?? declaration.name}.json`,
-            kind: "json",
-            content: stableJson(withFormatVersion(declaration.members.data, metadata.target))
-          });
-        }
-        break;
-      }
-      case "loot_table": {
-        if (isObject(declaration.members.data)) {
-          outputs.push({
-            path: `behavior_pack/${declaration.members.path ?? `loot_tables/${declaration.name}`}.json`,
-            kind: "json",
-            content: stableJson(declaration.members.data)
-          });
-        }
-        break;
-      }
-      case "spawn_rule": {
-        if (isObject(declaration.members.data)) {
-          outputs.push({
-            path: `behavior_pack/spawn_rules/${declaration.members.path ?? declaration.name}.json`,
-            kind: "json",
-            content: stableJson(withFormatVersion(declaration.members.data, metadata.target))
-          });
-        }
-        break;
-      }
-      case "animation": {
-        if (isObject(declaration.members.data)) {
-          outputs.push({
-            path: `resource_pack/animations/${declaration.members.path ?? declaration.name}.json`,
-            kind: "json",
-            content: stableJson(withFormatVersion(declaration.members.data, metadata.target))
-          });
-        }
-        break;
-      }
-      case "animation_controller": {
-        if (isObject(declaration.members.data)) {
-          outputs.push({
-            path: `resource_pack/animation_controllers/${declaration.members.path ?? declaration.name}.json`,
-            kind: "json",
-            content: stableJson(withFormatVersion(declaration.members.data, metadata.target))
-          });
-        }
-        break;
-      }
-      case "locale": {
-        locales.set(declaration.name, declaration.members);
-        break;
-      }
-      case "script_module": {
-        if (Array.isArray(declaration.members.body) && typeof declaration.members.entry === "string") {
-          outputs.push({
-            path: `behavior_pack/${declaration.members.entry}`,
-            kind: "text",
-            content: `${declaration.members.body.join("\n")}\n`
-          });
-        }
-        break;
-      }
-      default:
-        break;
+    }
+    if (declaration.kind === "function") {
+      outputs.push({
+        path: `behavior_pack/functions/${declaration.members.path ?? declaration.name}.mcfunction`,
+        kind: "text",
+        content: `${(declaration.members.body ?? []).join("\n")}\n`
+      });
+    }
+    if (declaration.kind === "locale") {
+      locales.set(declaration.name, declaration.members);
     }
   }
 
-  if (Object.keys(itemTextures).length > 0) {
+  if (Object.keys(textures).length > 0) {
     outputs.push({
       path: "resource_pack/textures/item_texture.json",
       kind: "json",
       content: stableJson({
         resource_pack_name: config?.project?.slug ?? metadata.slug,
         texture_name: "atlas.items",
-        texture_data: itemTextures
+        texture_data: textures
       })
     });
   }
@@ -838,15 +766,11 @@ function buildPreviewOutputs({ metadata, declarations, config }) {
       kind: "json",
       content: stableJson(languageNames)
     });
-
     for (const locale of languageNames) {
       outputs.push({
         path: `resource_pack/texts/${locale}.lang`,
         kind: "text",
-        content: `${Object.keys(locales.get(locale))
-          .sort()
-          .map((key) => `${key}=${locales.get(locale)[key]}`)
-          .join("\n")}\n`
+        content: `${Object.keys(locales.get(locale)).sort().map((key) => `${key}=${locales.get(locale)[key]}`).join("\n")}\n`
       });
     }
   }
@@ -857,7 +781,6 @@ function buildPreviewOutputs({ metadata, declarations, config }) {
 function extractDeclarations(source) {
   const declarations = [];
   const pattern = /\b(addon|item|block|entity|recipe|loot_table|function|animation|animation_controller|spawn_rule|locale|script_module)\s+([A-Za-z_][A-Za-z0-9_-]*)\s*\{/g;
-
   let match;
   while ((match = pattern.exec(source))) {
     const braceIndex = source.indexOf("{", match.index);
@@ -870,20 +793,17 @@ function extractDeclarations(source) {
     });
     pattern.lastIndex = block.end + 1;
   }
-
   return declarations;
 }
 
 function parseMembers(body) {
   const members = {};
   let index = 0;
-
   while (index < body.length) {
     index = skipWhitespace(body, index);
     if (index >= body.length) {
       break;
     }
-
     const keyResult = readKey(body, index);
     if (!keyResult) {
       break;
@@ -893,12 +813,10 @@ function parseMembers(body) {
       break;
     }
     index = skipWhitespace(body, index + 1);
-
     const valueResult = readValueUntilSemicolon(body, index);
     members[keyResult.key] = parseValue(valueResult.text.trim());
     index = valueResult.end + 1;
   }
-
   return members;
 }
 
@@ -911,23 +829,14 @@ function readKey(text, start) {
       }
       index += 1;
     }
-    return {
-      key: JSON.parse(text.slice(start, index + 1)),
-      end: index + 1
-    };
+    return { key: JSON.parse(text.slice(start, index + 1)), end: index + 1 };
   }
 
   let index = start;
   while (index < text.length && /[A-Za-z0-9_.-]/.test(text[index])) {
     index += 1;
   }
-
-  return index > start
-    ? {
-        key: text.slice(start, index),
-        end: index
-      }
-    : null;
+  return index > start ? { key: text.slice(start, index), end: index } : null;
 }
 
 function readValueUntilSemicolon(text, start) {
@@ -935,16 +844,13 @@ function readValueUntilSemicolon(text, start) {
   let braceDepth = 0;
   let bracketDepth = 0;
   let inString = false;
-
   while (index < text.length) {
     const character = text[index];
-
     if (character === "\"" && text[index - 1] !== "\\") {
       inString = !inString;
       index += 1;
       continue;
     }
-
     if (!inString) {
       if (character === "{") {
         braceDepth += 1;
@@ -955,35 +861,24 @@ function readValueUntilSemicolon(text, start) {
       } else if (character === "]") {
         bracketDepth -= 1;
       } else if (character === ";" && braceDepth === 0 && bracketDepth === 0) {
-        return {
-          text: text.slice(start, index),
-          end: index
-        };
+        return { text: text.slice(start, index), end: index };
       }
     }
-
     index += 1;
   }
-
-  return {
-    text: text.slice(start),
-    end: text.length
-  };
+  return { text: text.slice(start), end: text.length };
 }
 
 function parseValue(rawValue) {
   if (rawValue.length === 0) {
     return "";
   }
-
   if (rawValue === "true" || rawValue === "false") {
     return rawValue === "true";
   }
-
   if (/^-?\d+(\.\d+)?$/.test(rawValue)) {
     return Number(rawValue);
   }
-
   if (rawValue.startsWith("\"") || rawValue.startsWith("[") || rawValue.startsWith("{")) {
     try {
       return JSON.parse(rawValue);
@@ -991,7 +886,6 @@ function parseValue(rawValue) {
       return rawValue;
     }
   }
-
   return rawValue;
 }
 
@@ -999,85 +893,92 @@ function readBalancedBlock(text, braceStart) {
   let index = braceStart;
   let depth = 0;
   let inString = false;
-
   while (index < text.length) {
     const character = text[index];
-
     if (character === "\"" && text[index - 1] !== "\\") {
       inString = !inString;
       index += 1;
       continue;
     }
-
     if (!inString) {
       if (character === "{") {
         depth += 1;
       } else if (character === "}") {
         depth -= 1;
         if (depth === 0) {
-          return {
-            content: text.slice(braceStart + 1, index),
-            end: index
-          };
+          return { content: text.slice(braceStart + 1, index), end: index };
         }
       }
     }
-
     index += 1;
   }
-
-  return {
-    content: text.slice(braceStart + 1),
-    end: text.length - 1
-  };
+  return { content: text.slice(braceStart + 1), end: text.length - 1 };
 }
 
-function withFormatVersion(value, target) {
-  if (!isObject(value)) {
-    return { format_version: target };
+function normalizeEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
   }
-
-  return value.format_version === undefined
-    ? { format_version: target, ...value }
-    : value;
+  return entries.map((entry) => ({
+    path: entry.path,
+    kind: entry.kind ?? inferOutputKind(entry.path),
+    content: entry.content ?? "",
+    previewable: entry.previewable ?? true,
+    size: entry.size ?? null
+  }));
 }
 
-function stableJson(value) {
-  return `${JSON.stringify(sortDeep(value), null, 2)}\n`;
+function normalizeDiagnostics(diagnostics) {
+  return Array.isArray(diagnostics) ? diagnostics : [];
 }
 
-function sortDeep(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortDeep);
-  }
-
-  if (isObject(value)) {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, sortDeep(value[key])])
-    );
-  }
-
-  return value;
+function currentExplorerEntries() {
+  return state.explorerMode === "files" ? state.archiveFiles : state.outputs;
 }
 
-function createSeededUuid(seed) {
-  let hex = "";
-  let input = seed;
-
-  while (hex.length < 32) {
-    let hash = 2166136261;
-    for (const character of input) {
-      hash ^= character.charCodeAt(0);
-      hash = Math.imul(hash, 16777619) >>> 0;
-    }
-    hex += hash.toString(16).padStart(8, "0");
-    input = `${input}:${hex.length}`;
+function currentTargetVersion() {
+  try {
+    return JSON.parse(state.files["bedrockc.config.json"]).project?.target ?? "Unknown";
+  } catch {
+    return "Invalid config";
   }
+}
 
-  hex = hex.slice(0, 32);
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+function inferArchiveType(fileName) {
+  return fileName?.split(".").pop()?.toLowerCase() ?? "unknown";
+}
+
+function isHttpMode() {
+  return window.location.protocol !== "file:";
+}
+
+function formatBytes(bytes) {
+  if (!bytes) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let size = bytes;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${size.toFixed(size >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function onArchiveDragOver(event) {
+  event.preventDefault();
+  elements.archiveDropzone.classList.add("is-dragover");
+}
+
+function onArchiveDragLeave() {
+  elements.archiveDropzone.classList.remove("is-dragover");
+}
+
+function onArchiveDrop(event) {
+  event.preventDefault();
+  elements.archiveDropzone.classList.remove("is-dragover");
+  selectArchive(event.dataTransfer?.files?.[0] ?? null);
 }
 
 function lineForOffset(text, offset) {
@@ -1092,6 +993,36 @@ function skipWhitespace(text, index) {
   return cursor;
 }
 
+function stableJson(value) {
+  return `${JSON.stringify(sortDeep(value), null, 2)}\n`;
+}
+
+function sortDeep(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortDeep);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortDeep(value[key])]));
+  }
+  return value;
+}
+
+function createSeededUuid(seed) {
+  let hex = "";
+  let input = seed;
+  while (hex.length < 32) {
+    let hash = 2166136261;
+    for (const character of input) {
+      hash ^= character.charCodeAt(0);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    hex += hash.toString(16).padStart(8, "0");
+    input = `${input}:${hex.length}`;
+  }
+  hex = hex.slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((parseInt(hex[16], 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
 function asVersion(value) {
   if (Array.isArray(value) && value.length === 3) {
     return value.map((entry) => Number(entry) || 0);
@@ -1103,8 +1034,8 @@ function versionFromTarget(target) {
   return `${target}`.split(".").slice(0, 3).map((entry) => Number(entry) || 0);
 }
 
-function inferOutputKind(path) {
-  return path.endsWith(".json") ? "json" : "text";
+function inferOutputKind(pathName) {
+  return pathName.endsWith(".json") ? "json" : "text";
 }
 
 function loadStoredValue(storageKey, fallback) {
@@ -1135,13 +1066,6 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function isObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function escapeHtml(value) {
-  return `${value}`
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
+  return `${value}`.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }

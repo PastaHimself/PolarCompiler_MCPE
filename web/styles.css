@@ -161,6 +161,37 @@ body::before {
   gap: 22px;
 }
 
+.mode-switch {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+}
+
+.mode-switch-actions,
+.explorer-toggle,
+.output-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.mode-button {
+  padding: 11px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mode-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-color: rgba(19, 90, 114, 0.25);
+}
+
 .panel,
 .hero-card {
   background: var(--panel);
@@ -299,6 +330,59 @@ body::before {
 .editor-panel {
   display: grid;
   gap: 18px;
+}
+
+.upload-card {
+  display: grid;
+  gap: 18px;
+}
+
+.upload-command-bar {
+  margin-bottom: 0;
+}
+
+.dropzone {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 220px;
+  padding: 24px;
+  text-align: center;
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed rgba(19, 90, 114, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(244, 237, 226, 0.92));
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.dropzone:hover,
+.dropzone.is-dragover {
+  transform: translateY(-1px);
+  border-color: rgba(19, 90, 114, 0.44);
+  background: linear-gradient(180deg, rgba(237, 247, 250, 0.95), rgba(248, 242, 232, 0.96));
+}
+
+.dropzone p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.upload-detail-card {
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.upload-detail-grid,
+.upload-summary-list {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-detail-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .command-bar,

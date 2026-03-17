@@ -97,11 +97,16 @@ npm run compiler:watch -- --config ./bedrockc.config.json --debounce 75
 
 ## Web Workbench
 
-A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/Downloads/temp/web/index.html). It includes source/config editing, validate/build controls, diagnostics, and Bedrock output previews. By default it uses a browser preview adapter, and it can also be wired to a real host bridge through `window.bedrockcBridge`.
+A static frontend workbench is available at [`web/index.html`](/c:/Users/mg4392/Downloads/temp/web/index.html). It now supports two workflows:
+
+- `Editor` mode for `.bca` source and config editing with compiler output previews
+- `Upload` mode for `.mcaddon`, `.mcpack`, and `.zip` archive analysis with diagnostics, unpacked file previews, and generated output when the upload is a bedrockc source project
 
 ## Vercel Deployment
 
 Vercel support is included through [`vercel.json`](/c:/Users/mg4392/Downloads/temp/vercel.json), the serverless compiler bridge at [`api/compile.js`](/c:/Users/mg4392/Downloads/temp/api/compile.js), and the deployment build script [`scripts/prepare-public.js`](/c:/Users/mg4392/Downloads/temp/scripts/prepare-public.js). The `build` script copies [`web/`](/c:/Users/mg4392/Downloads/temp/web) into a generated `public/` directory so Vercel has an explicit static output directory, while the frontend calls `/api/compile` for real compiler runs.
+
+Archive upload support is exposed through [`api/archive.js`](/c:/Users/mg4392/Downloads/temp/api/archive.js). The upload API accepts `multipart/form-data` with a single `archive` file and supports `.mcaddon`, `.mcpack`, and `.zip`.
 
 Deployment platforms such as Vercel or Render often run `npm run build` automatically. In this repo, `build` is the deployment packaging step only. Use `npm run compiler:build` or `npx bedrockc build` when you want to compile an add-on project yourself.
 

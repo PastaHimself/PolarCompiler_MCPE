@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "A production-oriented compiler and CLI for Minecraft Bedrock add-on projects.",
   "type": "module",
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "busboy": "^1.6.0",
+    "unzipper": "^0.12.3"
+  },
   "bin": {
     "bedrockc": "./src/cli/index.js"
   },
