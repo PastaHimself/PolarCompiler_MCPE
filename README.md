@@ -2,6 +2,8 @@
 
 `bedrockc` is a Node.js ESM compiler and CLI for turning a custom `.bca` source language into a Minecraft Bedrock add-on project with separate behavior and resource packs.
 
+try:https://polar-compiler-mcpe-h8e2ax1id-pastahimselfs-projects.vercel.app/
+
 ## Features
 
 - Handwritten lexer and recursive-descent parser
