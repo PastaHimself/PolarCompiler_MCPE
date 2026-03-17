@@ -747,6 +747,7 @@ function renderExplorer() {
         : "Run a successful build to preview generated Bedrock files.";
     elements.outputEditor.hidden = true;
     elements.outputEditorShell.hidden = true;
+    elements.outputEditor.value = "";
     elements.outputContent.hidden = false;
     renderOutputHighlights();
     elements.previewFileButton.disabled = true;
@@ -790,11 +791,13 @@ function renderExplorer() {
   elements.downloadArchiveButton.disabled = !uploadMode || !state.uploadWorkspace || hasUnanalyzedChanges(state.uploadWorkspace);
 
   if (state.uploadViewerMode === "edit" && canEdit) {
+    elements.outputEditor.hidden = false;
     elements.outputEditorShell.hidden = false;
     elements.outputContent.hidden = true;
     elements.outputEditor.value = activeEntry.content;
     renderOutputHighlights();
   } else {
+    elements.outputEditor.hidden = true;
     elements.outputEditorShell.hidden = true;
     elements.outputContent.hidden = false;
     elements.outputContent.textContent = activeEntry.previewable === false
