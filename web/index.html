@@ -22,8 +22,20 @@
             <h1>bedrockc Workbench</h1>
           </div>
         </div>
+        <div class="header-mode-cluster">
+          <div class="header-mode-toggle" aria-label="Workbench mode">
+            <button class="mode-button is-active" id="mode-editor-button" type="button">Editor</button>
+            <button class="mode-button" id="mode-upload-button" type="button">Upload</button>
+          </div>
+          <div class="jump-nav" aria-label="Quick navigation">
+            <button class="jump-button" id="jump-workbench-button" type="button">Workbench</button>
+            <button class="jump-button" id="jump-diagnostics-button" type="button">Diagnostics</button>
+            <button class="jump-button" id="jump-explorer-button" type="button">Explorer</button>
+          </div>
+        </div>
         <div class="topbar-meta">
-          <span class="status-pill" id="bridge-pill">Bridge: Browser Preview</span>
+          <button class="rail-toggle" id="left-rail-toggle-button" type="button">Project</button>
+          <button class="rail-toggle" id="right-rail-toggle-button" type="button">Inspector</button>
           <span class="status-pill status-idle" id="run-state-pill">Idle</span>
         </div>
       </header>
@@ -60,26 +72,8 @@
           </div>
         </section>
 
-        <div class="mode-switch panel">
-          <div class="mode-switch-copy">
-            <p class="eyebrow">Workbench Mode</p>
-            <h3>Choose how you want to analyze add-ons.</h3>
-          </div>
-          <div class="mode-switch-meta">
-            <div class="mode-switch-actions">
-              <button class="mode-button is-active" id="mode-editor-button" type="button">Editor</button>
-              <button class="mode-button" id="mode-upload-button" type="button">Upload</button>
-            </div>
-            <div class="jump-nav" aria-label="Quick navigation">
-              <button class="jump-button" id="jump-workbench-button" type="button">Workbench</button>
-              <button class="jump-button" id="jump-diagnostics-button" type="button">Diagnostics</button>
-              <button class="jump-button" id="jump-explorer-button" type="button">Explorer</button>
-            </div>
-          </div>
-        </div>
-
         <div class="workbench-grid" id="workbench-section">
-          <aside class="panel nav-panel">
+          <aside class="panel nav-panel rail-panel left-rail" id="left-rail">
             <section class="panel-section">
               <div class="section-heading">
                 <p class="eyebrow">Project</p>
@@ -104,29 +98,9 @@
               <div class="upload-summary-list" id="upload-summary-list"></div>
             </section>
 
-            <section class="panel-section">
-              <div class="section-heading">
-                <p class="eyebrow">Signals</p>
-                <h3>Compile Snapshot</h3>
-              </div>
-              <div class="mini-metrics">
-                <article>
-                  <span>Diagnostics</span>
-                  <strong id="metric-diagnostics">0</strong>
-                </article>
-                <article>
-                  <span>Files in view</span>
-                  <strong id="metric-outputs">0</strong>
-                </article>
-                <article>
-                  <span>Last duration</span>
-                  <strong id="metric-duration">0ms</strong>
-                </article>
-              </div>
-            </section>
           </aside>
 
-          <section class="panel editor-panel">
+          <section class="panel editor-panel center-panel">
             <div id="editor-workbench">
               <div class="command-bar">
                 <div class="command-copy">
@@ -217,10 +191,10 @@
             </div>
           </section>
 
-          <aside class="panel insight-panel">
+          <aside class="panel insight-panel rail-panel right-rail" id="right-rail">
             <section class="panel-section">
               <div class="section-heading">
-                <p class="eyebrow">Run Summary</p>
+                <p class="eyebrow">Inspector</p>
                 <h3>Compiler Status</h3>
               </div>
               <div class="summary-stack">
@@ -235,6 +209,10 @@
                 <div class="summary-card">
                   <span class="summary-label">Watch mode</span>
                   <strong id="watch-state">Disabled</strong>
+                </div>
+                <div class="summary-card">
+                  <span class="summary-label">Files in view</span>
+                  <strong id="metric-outputs">0</strong>
                 </div>
               </div>
             </section>
@@ -303,6 +281,25 @@
           </div>
         </section>
       </main>
+
+      <div class="status-strip" role="status" aria-live="polite">
+        <div class="status-strip-item bridge-strip-item">
+          <span class="status-dot"></span>
+          <span id="bridge-pill">Bridge: Browser Preview</span>
+        </div>
+        <div class="status-strip-item">
+          <span class="status-strip-label">Duration</span>
+          <strong id="metric-duration">0ms</strong>
+        </div>
+        <div class="status-strip-item">
+          <span class="status-strip-label">Diagnostics</span>
+          <strong id="metric-diagnostics">0</strong>
+        </div>
+        <div class="status-strip-item">
+          <span class="status-strip-label">Mode</span>
+          <strong id="current-mode-label">Editor</strong>
+        </div>
+      </div>
     </div>
 
     <script src="./vendor/jszip.min.js"></script>
